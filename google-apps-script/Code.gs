@@ -38,15 +38,13 @@ const BANK_INFO =
   "• Bank Mandiri : 9876543210 (a.n. Panitia Kegiatan)\n" +
   "• DANA / QRIS  : 081234567890 (a.n. Panitia)";
 
-// Harga per tiket (sesuaikan jika ada perbedaan harga per sesi)
-const DEFAULT_TICKET_PRICE = 25000; 
+// Harga per tiket resmi: Rp 75.000
+const DEFAULT_TICKET_PRICE = 75000; 
 
-// Pilihan harga berdasarkan Performance Session (opsional, jika sama semua biarkan default)
+// Pilihan harga berdasarkan Performance Session
 const SESSION_PRICES = {
-  "Session 1": 25000,
-  "Session 2": 25000,
-  "Sesi Siang": 25000,
-  "Sesi Malam": 30000
+  "Session 1": 75000,
+  "Session 2": 75000
 };
 
 // ==========================================

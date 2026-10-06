@@ -324,7 +324,9 @@ app.post('/api/webhook/order', async (req, res) => {
     // Price calculation
     let ticket_price = parseInt(body.ticket_price || 0, 10);
     if (!ticket_price && settings.ticket_prices) {
-      ticket_price = settings.ticket_prices[ticket_category] || 25000;
+      ticket_price = settings.ticket_prices[ticket_category] || settings.ticket_prices['Default'] || 75000;
+    } else if (!ticket_price) {
+      ticket_price = 75000;
     }
     const total_amount = parseInt(body.total_amount || 0, 10) || (ticket_price * ticket_qty);
     const payment_method = body.payment_method || (sender_account_name ? `Transfer a.n. ${sender_account_name}` : 'Transfer Bank');
@@ -671,7 +673,7 @@ app.post('/api/orders/manual', upload.single('payment_proof'), async (req, res) 
     const cleanPhone = formatIndonesianPhone(phone);
     const order_id = generateOrderId();
     const qty = parseInt(ticket_qty || 1, 10);
-    const price = parseInt(ticket_price || (settings.ticket_prices ? settings.ticket_prices[ticket_category] : 25000), 10);
+    const price = parseInt(ticket_price || (settings.ticket_prices ? (settings.ticket_prices[ticket_category] || settings.ticket_prices['Default']) : 75000) || 75000, 10);
     const total = qty * price;
 
     let proofUrl = '';

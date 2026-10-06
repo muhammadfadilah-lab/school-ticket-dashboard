@@ -143,9 +143,9 @@ async function syncFromGoogleSheet(sheetUrlOrId, options = {}) {
         order_id = 'TIX-' + Math.floor(1000 + Math.random() * 9000);
       }
 
-      let ticket_price = 25000;
-      if (settings.ticket_prices && settings.ticket_prices[ticket_category]) {
-        ticket_price = settings.ticket_prices[ticket_category];
+      let ticket_price = 75000;
+      if (settings.ticket_prices && (settings.ticket_prices[ticket_category] || settings.ticket_prices['Default'])) {
+        ticket_price = settings.ticket_prices[ticket_category] || settings.ticket_prices['Default'];
       }
       const total_amount = ticket_price * ticket_qty;
       const payment_method = sender_account_name ? `Transfer a.n. ${sender_account_name}` : 'Transfer Bank';

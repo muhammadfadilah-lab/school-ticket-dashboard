@@ -688,8 +688,8 @@ async function handleCheckinSubmit(e) {
 function updateManualPrice() {
   const cat = document.getElementById('manual-ticket-cat').value;
   const qty = parseInt(document.getElementById('manual-ticket-qty').value || 1, 10);
-  const prices = currentSettings.ticket_prices || { 'Presale': 20000, 'Reguler': 25000, 'VIP': 50000 };
-  const price = prices[cat] || 25000;
+  const prices = currentSettings.ticket_prices || { 'Default': 75000, 'Reguler': 75000 };
+  const price = prices[cat] || prices['Default'] || 75000;
   document.getElementById('manual-ticket-total').value = price * qty;
 }
 
