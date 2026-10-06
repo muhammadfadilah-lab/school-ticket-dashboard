@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard Tiket Kegiatan Sekolah & Verifikasi Pembayaran</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+    .badge-pulse {
+      animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: .5; }
+    }
+    @media print {
+      header, nav, #pending-alert-banner, button, a[href^="/api"], .no-print {
+        display: none !important;
+      }
+      body {
+        background: white !important;
+        color: black !important;
+      }
+      #tab-content-recap {
+        display: block !important;
+      }
+      .shadow-sm, .shadow-md, .shadow-xl {
+        box-shadow: none !important;
+      }
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col">
+
+  <!-- Top Navbar -->
+  <header class="bg-indigo-900 text-white shadow-lg sticky top-0 z-40 border-b border-indigo-800">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between h-16">
+      
+      <!-- Brand -->
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-400 to-indigo-500 flex items-center justify-center shadow-md">
+          <i data-lucide="ticket" class="w-5 h-5 text-indigo-950 font-black"></i>
+        </div>
+        <div>
+          <h1 class="text-base sm:text-lg font-bold leading-tight tracking-tight flex items-center gap-2">
+            <span>Sistem Tiket Sekolah</span>
+            <span class="text-[10px] bg-indigo-700/80 text-indigo-200 px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider">Dashboard</span>
+          </h1>
+          <p id="top-event-name" class="text-xs text-indigo-200 font-medium truncate max-w-xs sm:max-w-md">Memuat nama acara...</p>
+        </div>
+      </div>
+
+      <!-- Action items -->
+      <div class="flex items-center space-x-2 sm:space-x-3">
+        <button onclick="refreshData()" class="p-2 rounded-lg bg-indigo-800/80 hover:bg-indigo-700 text-indigo-200 hover:text-white transition text-xs font-semibold flex items-center gap-1.5" title="Muat ulang data">
+          <i data-lucide="refresh-cw" class="w-4 h-4" id="refresh-icon"></i>
+          <span class="hidden sm:inline">Segarkan</span>
+        </button>
+        <button onclick="openSheetSyncModal()" class="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition text-xs font-bold flex items-center gap-1.5 shadow-sm" title="Sinkronkan respon dari Google Spreadsheet">
+          <i data-lucide="sheet" class="w-4 h-4"></i>
+          <span>Sinkronkan Sheet</span>
+        </button>
+        <a href="/api/orders/export-csv" class="px-3 py-2 rounded-lg bg-indigo-800/80 hover:bg-indigo-700 text-white transition text-xs font-semibold flex items-center gap-1.5 shadow-sm">
+          <i data-lucide="download" class="w-4 h-4"></i>
+          <span class="hidden sm:inline">Export CSV</span>
+        </a>
+      </div>
+
+    </div>
+
+    <!-- Navigation Tabs -->
+    <nav class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex space-x-1 sm:space-x-4 overflow-x-auto text-sm border-t border-indigo-800/60 py-1.5 scrollbar-none">
+      <button onclick="switchTab('overview')" id="tab-btn-overview" class="tab-btn px-3 py-1.5 rounded-lg font-medium text-xs sm:text-sm text-indigo-200 hover:text-white hover:bg-indigo-800/50 flex items-center gap-2 whitespace-nowrap active-tab bg-indigo-800 text-white">
+        <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
+        <span>Ringkasan</span>
+      </button>
+      <button onclick="switchTab('orders')" id="tab-btn-orders" class="tab-btn px-3 py-1.5 rounded-lg font-medium text-xs sm:text-sm text-indigo-200 hover:text-white hover:bg-indigo-800/50 flex items-center gap-2 whitespace-nowrap relative">
+        <i data-lucide="users" class="w-4 h-4"></i>
+        <span>Data Pembeli & Verifikasi</span>
+        <span id="pending-counter-badge" class="hidden bg-amber-400 text-amber-950 text-[10px] font-black px-1.5 py-0.2 rounded-full">0</span>
+      </button>
+      <button onclick="switchTab('recap')" id="tab-btn-recap" class="tab-btn px-3 py-1.5 rounded-lg font-medium text-xs sm:text-sm text-indigo-200 hover:text-white hover:bg-indigo-800/50 flex items-center gap-2 whitespace-nowrap">
+        <i data-lucide="bar-chart-3" class="w-4 h-4"></i>
+        <span>Rekap Sesi</span>
+      </button>
+      <button onclick="switchTab('checkin')" id="tab-btn-checkin" class="tab-btn px-3 py-1.5 rounded-lg font-medium text-xs sm:text-sm text-indigo-200 hover:text-white hover:bg-indigo-800/50 flex items-center gap-2 whitespace-nowrap">
+        <i data-lucide="scan-line" class="w-4 h-4"></i>
+        <span>Check-in Gate (Hari-H)</span>
+      </button>
+      <button onclick="switchTab('manual')" id="tab-btn-manual" class="tab-btn px-3 py-1.5 rounded-lg font-medium text-xs sm:text-sm text-indigo-200 hover:text-white hover:bg-indigo-800/50 flex items-center gap-2 whitespace-nowrap">
+        <i data-lucide="user-plus" class="w-4 h-4"></i>
+        <span>Input Manual / OTS</span>
+      </button>
+      <button onclick="switchTab('settings')" id="tab-btn-settings" class="tab-btn px-3 py-1.5 rounded-lg font-medium text-xs sm:text-sm text-indigo-200 hover:text-white hover:bg-indigo-800/50 flex items-center gap-2 whitespace-nowrap">
+        <i data-lucide="settings" class="w-4 h-4"></i>
+        <span>Pengaturan & Integrasi Form</span>
+      </button>
+    </nav>
+  </header>
+
+  <!-- Main Content Area -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full">
+
+    <!-- ============================================== -->
+    <!-- TAB 1: OVERVIEW & STATS -->
+    <!-- ============================================== -->
+    <section id="tab-content-overview" class="space-y-6">
+      
+      <!-- Metrics Cards -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        
+        <!-- Total Pendapatan Lunas -->
+        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Pendapatan Lunas</span>
+            <div class="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+              <i data-lucide="banknote" class="w-4 h-4"></i>
+            </div>
+          </div>
+          <p class="text-xl sm:text-2xl font-extrabold text-slate-900 mt-2" id="metric-revenue">Rp 0</p>
+          <div class="flex items-center gap-1.5 mt-2 text-xs text-emerald-600 font-medium">
+            <i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i>
+            <span>Dari pesanan terverifikasi</span>
+          </div>
+        </div>
+
+        <!-- Menunggu Verifikasi (Pending) -->
+        <div class="bg-white p-5 rounded-2xl border border-amber-200 shadow-sm bg-gradient-to-br from-amber-50/40 to-white relative overflow-hidden cursor-pointer" onclick="filterByStatus('pending')">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-semibold text-amber-700 uppercase tracking-wider">Menunggu Verifikasi</span>
+            <div class="w-8 h-8 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
+              <i data-lucide="clock" class="w-4 h-4"></i>
+            </div>
+          </div>
+          <div class="flex items-baseline gap-2 mt-2">
+            <p class="text-xl sm:text-2xl font-extrabold text-amber-700" id="metric-pending-orders">0</p>
+            <span class="text-xs text-amber-600 font-medium" id="metric-pending-tickets">(0 tiket)</span>
+          </div>
+          <div class="flex items-center gap-1 mt-2 text-xs text-amber-700 font-medium">
+            <span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+            <span>Perlu pengecekan bukti transfer</span>
+          </div>
+        </div>
+
+        <!-- Tiket Terjual -->
+        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Tiket Lunas</span>
+            <div class="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
+              <i data-lucide="ticket" class="w-4 h-4"></i>
+            </div>
+          </div>
+          <div class="flex items-baseline gap-2 mt-2">
+            <p class="text-xl sm:text-2xl font-extrabold text-slate-900" id="metric-verified-tickets">0</p>
+            <span class="text-xs text-slate-500 font-medium">Tiket Pax</span>
+          </div>
+          <div class="flex items-center gap-1.5 mt-2 text-xs text-slate-500 font-medium">
+            <i data-lucide="users" class="w-3.5 h-3.5 text-indigo-500"></i>
+            <span><span id="metric-verified-orders">0</span> Transaksi disetujui</span>
+          </div>
+        </div>
+
+        <!-- Total Pendaftar -->
+        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Respon Form</span>
+            <div class="w-8 h-8 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center">
+              <i data-lucide="file-text" class="w-4 h-4"></i>
+            </div>
+          </div>
+          <p class="text-xl sm:text-2xl font-extrabold text-slate-900 mt-2" id="metric-total-orders">0</p>
+          <div class="flex items-center gap-1.5 mt-2 text-xs text-slate-500 font-medium">
+            <i data-lucide="log-in" class="w-3.5 h-3.5 text-slate-400"></i>
+            <span><span id="metric-checked-in">0</span> tamu sudah check-in</span>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Quick Action Alert if Pending Orders exist -->
+      <div id="pending-alert-banner" class="hidden bg-amber-500 text-white rounded-2xl p-4 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center flex-shrink-0">
+            <i data-lucide="alert-circle" class="w-6 h-6"></i>
+          </div>
+          <div>
+            <h3 class="font-bold text-sm sm:text-base">Ada <span id="banner-pending-count">0</span> Pembeli Menunggu Verifikasi Bank!</h3>
+            <p class="text-xs text-amber-100">Buka menu verifikasi untuk mengecek foto bukti transfer dan mengirim e-tiket WhatsApp.</p>
+          </div>
+        </div>
+        <button onclick="filterByStatus('pending')" class="bg-white text-amber-900 hover:bg-amber-50 px-4 py-2 rounded-xl text-xs font-bold shadow-sm whitespace-nowrap transition">
+          Periksa Sekarang &rarr;
+        </button>
+      </div>
+
+      <!-- Two column breakdown -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        
+        <!-- Category Breakdown -->
+        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+          <h3 class="font-bold text-sm text-slate-800 mb-3 flex items-center gap-2">
+            <i data-lucide="pie-chart" class="w-4 h-4 text-indigo-600"></i>
+            Penjualan per Kategori Tiket
+          </h3>
+          <div id="category-list" class="space-y-3">
+            <div class="text-xs text-slate-400 italic">Memuat data kategori...</div>
+          </div>
+        </div>
+
+        <!-- How It Works Flow -->
+        <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm md:col-span-2">
+          <h3 class="font-bold text-sm text-slate-800 mb-3 flex items-center gap-2">
+            <i data-lucide="git-branch" class="w-4 h-4 text-indigo-600"></i>
+            Alur Otomasi Tiket Sekolah & WhatsApp
+          </h3>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+            <div class="p-3 rounded-xl bg-slate-50 border border-slate-200">
+              <span class="w-6 h-6 rounded-full bg-indigo-600 text-white font-bold text-xs inline-flex items-center justify-center mb-2">1</span>
+              <h4 class="font-bold text-slate-800">Pembeli Isi Form</h4>
+              <p class="text-slate-500 mt-1">Pembeli mengisi Google Form (nama, nomor WA, kategori tiket, & upload bukti transfer).</p>
+            </div>
+            <div class="p-3 rounded-xl bg-slate-50 border border-slate-200">
+              <span class="w-6 h-6 rounded-full bg-amber-500 text-white font-bold text-xs inline-flex items-center justify-center mb-2">2</span>
+              <h4 class="font-bold text-slate-800">WA Tanda Terima</h4>
+              <p class="text-slate-500 mt-1">Sistem otomatis mengirim WhatsApp tanda terima pesanan + rincian rekening transfer bank ke nomor pembeli.</p>
+            </div>
+            <div class="p-3 rounded-xl bg-slate-50 border border-slate-200">
+              <span class="w-6 h-6 rounded-full bg-emerald-600 text-white font-bold text-xs inline-flex items-center justify-center mb-2">3</span>
+              <h4 class="font-bold text-slate-800">Panitia Verifikasi</h4>
+              <p class="text-slate-500 mt-1">Panitia cek mutasi bank & klik Verifikasi di dashboard. Sistem otomatis kirim E-Tiket ber-QR Code via WA!</p>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+    </section>
+
+    <!-- ============================================== -->
+    <!-- TAB 2: DATA PEMBELI & VERIFIKASI -->
+    <!-- ============================================== -->
+    <section id="tab-content-orders" class="hidden space-y-4">
+      
+      <!-- Filter & Search Toolbar -->
+      <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
+        
+        <!-- Search bar -->
+        <div class="relative flex-1">
+          <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3 top-3"></i>
+          <input type="text" id="order-search" oninput="handleSearch()" placeholder="Cari nama pembeli, nomor WhatsApp, atau kode TIX..." class="w-full pl-9 pr-4 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition">
+        </div>
+
+        <!-- Filter Selects -->
+        <div class="flex flex-wrap items-center gap-2">
+          
+          <!-- Status Filter -->
+          <select id="filter-status" onchange="loadOrders()" class="text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-700 font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <option value="all">Semua Status</option>
+            <option value="pending" selected>⏳ Menunggu Verifikasi</option>
+            <option value="verified">✅ Lunas (Terverifikasi)</option>
+            <option value="rejected">✕ Ditolak</option>
+          </select>
+
+          <!-- Category Filter -->
+          <select id="filter-category" onchange="loadOrders()" class="text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-700 font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <option value="all">Semua Kategori</option>
+            <option value="Reguler">Reguler</option>
+            <option value="Presale">Presale</option>
+            <option value="VIP">VIP</option>
+          </select>
+
+        </div>
+
+      </div>
+
+      <!-- Orders Table Container -->
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm">
+            <thead class="bg-slate-50/80 text-slate-500 text-[11px] uppercase tracking-wider border-b border-slate-200">
+              <tr>
+                <th class="py-3 px-3">Order ID & Waktu</th>
+                <th class="py-3 px-3">Name & Email</th>
+                <th class="py-3 px-3">Phone Number</th>
+                <th class="py-3 px-3">Performance Session</th>
+                <th class="py-3 px-3 text-center">Amount (Pax)</th>
+                <th class="py-3 px-3">Total Tagihan</th>
+                <th class="py-3 px-3 text-center">Have you transferred?</th>
+                <th class="py-3 px-3">Sender's Account Name</th>
+                <th class="py-3 px-3 text-center">Payment Receipt</th>
+                <th class="py-3 px-3 text-center">Status</th>
+                <th class="py-3 px-3 text-right">Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="orders-tbody" class="divide-y divide-slate-100">
+              <tr>
+                <td colspan="11" class="text-center py-10 text-slate-400">
+                  <div class="inline-block animate-spin rounded-full h-8 w-8 border-2 border-indigo-600 border-t-transparent mb-2"></div>
+                  <p class="text-xs">Memuat data pesanan...</p>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Table Footer / Count -->
+        <div class="bg-slate-50 px-4 py-3 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
+          <span>Menampilkan <strong id="orders-count-text">0</strong> transaksi</span>
+          <span class="text-[11px] text-slate-400">Tips: Klik "Verifikasi Lunas" untuk langsung mengirimkan E-Tiket WhatsApp ke pembeli</span>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ============================================== -->
+    <!-- TAB: REKAPITULASI SESI PERTUNJUKAN -->
+    <!-- ============================================== -->
+    <section id="tab-content-recap" class="hidden space-y-6">
+      
+      <!-- Recap Header -->
+      <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
+        <div>
+          <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+            <i data-lucide="bar-chart-2" class="w-5 h-5 text-indigo-600"></i>
+            Rekapitulasi Penjualan per Performance Session
+          </h2>
+          <p class="text-xs text-slate-500 mt-0.5">
+            Pantau alokasi kursi/tiket, nominal pendapatan lunas, dan kehadiran tamu per sesi pertunjukan.
+          </p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="printSessionRecap()" class="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-sm">
+            <i data-lucide="printer" class="w-4 h-4"></i>
+            <span>Cetak Rekap & Presensi</span>
+          </button>
+          <a href="/api/recap/sessions/export-csv" class="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-sm">
+            <i data-lucide="download" class="w-4 h-4"></i>
+            <span>Export CSV Rekap</span>
+          </a>
+        </div>
+      </div>
+
+      <!-- Recap Session Cards Grid -->
+      <div id="recap-cards-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <!-- Rendered dynamically by loadSessionRecap() -->
+      </div>
+
+      <!-- Comparison Matrix Table -->
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="p-4 border-b border-slate-100 flex items-center justify-between">
+          <h3 class="font-bold text-sm text-slate-800 flex items-center gap-2">
+            <i data-lucide="table" class="w-4 h-4 text-indigo-600"></i>
+            Tabel Matriks Ringkasan Semua Sesi
+          </h3>
+          <span class="text-xs text-slate-400 font-medium">Data real-time dari Google Form & Dashboard</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm">
+            <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
+              <tr>
+                <th class="py-3 px-4">Performance Session</th>
+                <th class="py-3 px-4 text-center">Total Pesanan</th>
+                <th class="py-3 px-4 text-center">Total Tiket (Pax)</th>
+                <th class="py-3 px-4 text-center">Tiket Lunas</th>
+                <th class="py-3 px-4 text-center">Tiket Pending</th>
+                <th class="py-3 px-4 text-right">Pendapatan Lunas (Rp)</th>
+                <th class="py-3 px-4 text-center">Kehadiran (Check-in)</th>
+              </tr>
+            </thead>
+            <tbody id="recap-matrix-tbody" class="divide-y divide-slate-100">
+              <!-- Rendered dynamically -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Interactive Session Guest List / Presensi -->
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden" id="printable-guestlist-section">
+        <div class="p-4 border-b border-slate-100 flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
+          <div>
+            <h3 class="font-bold text-sm text-slate-800 flex items-center gap-2">
+              <i data-lucide="clipboard-list" class="w-4 h-4 text-indigo-600"></i>
+              Buku Tamu / Daftar Hadir per Sesi (Checklist Gate)
+            </h3>
+            <p class="text-[11px] text-slate-400">Daftar penonton untuk verifikasi ulang saat masuk ke ruangan pertunjukan.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <select id="recap-session-filter" onchange="filterRecapOrders()" class="text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-bold text-indigo-700 focus:outline-none">
+              <option value="all">Semua Sesi Pertunjukan</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-slate-50 text-slate-500 text-[11px] uppercase tracking-wider border-b border-slate-200">
+              <tr>
+                <th class="py-3 px-3">No</th>
+                <th class="py-3 px-3">Order ID</th>
+                <th class="py-3 px-3">Nama Pembeli</th>
+                <th class="py-3 px-3">Kontak WhatsApp</th>
+                <th class="py-3 px-3">Sesi</th>
+                <th class="py-3 px-3 text-center">Jumlah Tiket</th>
+                <th class="py-3 px-3">Rekening Pengirim</th>
+                <th class="py-3 px-3 text-center">Status Bayar</th>
+                <th class="py-3 px-3 text-center">Kehadiran Gate</th>
+              </tr>
+            </thead>
+            <tbody id="recap-guestlist-tbody" class="divide-y divide-slate-100">
+              <!-- Rendered dynamically -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ============================================== -->
+    <!-- TAB 3: CHECK-IN GATE (HARI H ACARA) -->
+    <!-- ============================================== -->
+    <section id="tab-content-checkin" class="hidden space-y-6">
+      
+      <div class="max-w-2xl mx-auto bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-sm text-center">
+        <div class="w-16 h-16 rounded-2xl bg-indigo-50 text-indigo-700 flex items-center justify-center mx-auto mb-4">
+          <i data-lucide="scan-line" class="w-8 h-8"></i>
+        </div>
+        <h2 class="text-xl font-bold text-slate-900">Validasi & Check-in Tiket Masuk</h2>
+        <p class="text-xs sm:text-sm text-slate-500 mt-1 max-w-md mx-auto">
+          Gunakan panel ini saat hari H acara sekolah. Masukkan nomor tiket dari pembeli atau scan QR Code untuk memvalidasi akses masuk.
+        </p>
+
+        <!-- Input Box -->
+        <form onsubmit="handleCheckinSubmit(event)" class="mt-6 flex flex-col sm:flex-row gap-2">
+          <input type="text" id="checkin-input" placeholder="Masukkan Kode Tiket (cth: TIX-1002)..." class="flex-1 px-4 py-3 text-base bg-slate-50 border-2 border-slate-200 rounded-xl font-mono uppercase focus:bg-white focus:outline-none focus:border-indigo-600 transition" required>
+          <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-6 py-3 rounded-xl transition flex items-center justify-center gap-2 shadow-md">
+            <i data-lucide="check-circle" class="w-5 h-5"></i>
+            <span>Periksa & Masuk</span>
+          </button>
+        </form>
+
+        <!-- Check-in Result Card (Dynamic) -->
+        <div id="checkin-result" class="hidden mt-6 text-left p-5 rounded-2xl border transition-all"></div>
+      </div>
+
+    </section>
+
+    <!-- ============================================== -->
+    <!-- TAB 4: MANUAL ENTRY / OTS -->
+    <!-- ============================================== -->
+    <section id="tab-content-manual" class="hidden space-y-6">
+      
+      <div class="max-w-2xl mx-auto bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-sm">
+        <div class="flex items-center gap-3 mb-6">
+          <div class="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
+            <i data-lucide="user-plus" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h2 class="text-lg font-bold text-slate-900">Input Tiket Manual (OTS / Tunai)</h2>
+            <p class="text-xs text-slate-500">Gunakan form ini jika ada siswa/wali murid yang membeli tiket langsung di tempat secara tunai.</p>
+          </div>
+        </div>
+
+        <form id="manual-order-form" onsubmit="handleManualOrder(event)" class="space-y-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1">Nama Lengkap Pembeli *</label>
+              <input type="text" name="name" required placeholder="Cth: Budi Pratama" class="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500">
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1">Nomor WhatsApp *</label>
+              <input type="text" name="phone" required placeholder="081234567890" class="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1">Kelas / Asal Instansi</label>
+              <input type="text" name="institution" placeholder="Cth: Kelas X-A / Alumni" class="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500">
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1">Email (Opsional)</label>
+              <input type="email" name="email" placeholder="budi@gmail.com" class="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1">Kategori Tiket</label>
+              <select name="ticket_category" id="manual-ticket-cat" onchange="updateManualPrice()" class="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white">
+                <option value="Reguler">Reguler</option>
+                <option value="Presale">Presale</option>
+                <option value="VIP">VIP</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1">Jumlah Tiket</label>
+              <input type="number" name="ticket_qty" id="manual-ticket-qty" min="1" value="1" onchange="updateManualPrice()" class="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white">
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1">Total Tagihan (Rp)</label>
+              <input type="number" name="ticket_price" id="manual-ticket-total" readonly class="w-full px-3.5 py-2 text-sm bg-slate-100 border border-slate-200 rounded-xl font-bold text-indigo-700">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1">Metode Pembayaran</label>
+              <select name="payment_method" class="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white">
+                <option value="Tunai / Cash (Di Tempat)">Tunai / Cash (Di Tempat)</option>
+                <option value="Transfer Bank BCA">Transfer Bank BCA</option>
+                <option value="Transfer Bank Mandiri">Transfer Bank Mandiri</option>
+                <option value="QRIS / E-Wallet">QRIS / E-Wallet</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1">Upload Bukti Transfer (Opsional)</label>
+              <input type="file" name="payment_proof" accept="image/*" class="w-full text-xs text-slate-500 file:mr-2 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+            </div>
+          </div>
+
+          <div class="pt-2">
+            <label class="flex items-center gap-2 cursor-pointer bg-emerald-50 p-3 rounded-xl border border-emerald-200">
+              <input type="checkbox" name="auto_verify" value="true" checked class="w-4 h-4 text-emerald-600 rounded">
+              <span class="text-xs text-emerald-900 font-semibold">Tandai LANGSUNG LUNAS & Kirim E-Tiket WhatsApp ke pembeli</span>
+            </label>
+          </div>
+
+          <div class="pt-4 flex justify-end">
+            <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-6 py-2.5 rounded-xl transition shadow-md flex items-center gap-2 text-sm">
+              <i data-lucide="check" class="w-4 h-4"></i>
+              <span>Simpan & Terbitkan Tiket</span>
+            </button>
+          </div>
+        </form>
+      </div>
+
+    </section>
+
+    <!-- ============================================== -->
+    <!-- TAB 5: PENGATURAN & INTEGRASI FORM -->
+    <!-- ============================================== -->
+    <section id="tab-content-settings" class="hidden space-y-6">
+      
+      <!-- Sub Tabs: Settings or Tutorial -->
+      <div class="flex gap-2 border-b border-slate-200 pb-2">
+        <button onclick="switchSettingsSubTab('general')" id="subtab-btn-general" class="px-4 py-2 text-xs sm:text-sm font-bold rounded-xl bg-indigo-50 text-indigo-700">
+          ⚙️ Pengaturan Acara & WA Gateway
+        </button>
+        <button onclick="switchSettingsSubTab('guide')" id="subtab-btn-guide" class="px-4 py-2 text-xs sm:text-sm font-bold rounded-xl text-slate-600 hover:bg-slate-100">
+          📋 Panduan Integrasi Google Form & Apps Script
+        </button>
+      </div>
+
+      <!-- Settings Panel -->
+      <div id="settings-panel-general" class="space-y-6">
+        
+        <form id="settings-form" onsubmit="handleSaveSettings(event)" class="bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-sm space-y-6">
+          
+          <!-- Event Information -->
+          <div>
+            <h3 class="font-bold text-base text-slate-800 mb-3 flex items-center gap-2">
+              <i data-lucide="calendar" class="w-5 h-5 text-indigo-600"></i>
+              Informasi Kegiatan Sekolah
+            </h3>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs font-bold text-slate-700 mb-1">Nama Acara / Kegiatan</label>
+                <input type="text" id="setting-event-name" required class="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white">
+              </div>
+              <div>
+                <label class="block text-xs font-bold text-slate-700 mb-1">Nama Sekolah / Panitia</label>
+                <input type="text" id="setting-school-name" required class="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white">
+              </div>
+              <div>
+                <label class="block text-xs font-bold text-slate-700 mb-1">Tanggal Acara</label>
+                <input type="text" id="setting-event-date" placeholder="Sabtu, 24 Oktober 2026" class="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white">
+              </div>
+              <div>
+                <label class="block text-xs font-bold text-slate-700 mb-1">Waktu & Tempat</label>
+                <input type="text" id="setting-event-time" placeholder="08:00 WIB di Aula Sekolah" class="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white">
+              </div>
+            </div>
+          </div>
+
+          <!-- Bank Account Info -->
+          <div class="border-t border-slate-100 pt-6">
+            <h3 class="font-bold text-base text-slate-800 mb-3 flex items-center gap-2">
+              <i data-lucide="credit-card" class="w-5 h-5 text-indigo-600"></i>
+              Rekening Transfer Bank Panitia (Tercantum pada Receipt WA)
+            </h3>
+            <div class="space-y-3" id="bank-accounts-container"></div>
+            <button type="button" onclick="addBankRow()" class="mt-2 text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
+              <i data-lucide="plus" class="w-4 h-4"></i> Tambah Rekening Bank / E-Wallet Lain
+            </button>
+          </div>
+
+          <!-- WhatsApp Gateway Config -->
+          <div class="border-t border-slate-100 pt-6">
+            <h3 class="font-bold text-base text-slate-800 mb-3 flex items-center gap-2">
+              <i data-lucide="message-square" class="w-5 h-5 text-emerald-600"></i>
+              Pengaturan WhatsApp Gateway Otomatis
+            </h3>
+            <p class="text-xs text-slate-500 mb-4">
+              Pilih layanan WhatsApp Gateway untuk mengirim pesan tanda terima dan tiket secara otomatis ke nomor pembeli.
+            </p>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs font-bold text-slate-700 mb-1">Pilihan Gateway</label>
+                <select id="setting-gateway-type" class="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white">
+                  <option value="fonnte">Fonnte (Rekomendasi - Mudah & Populer)</option>
+                  <option value="wablas">Wablas</option>
+                  <option value="direct">Direct WhatsApp Link (Tanpa API - 100% Gratis)</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-xs font-bold text-slate-700 mb-1">API Token WhatsApp</label>
+                <input type="password" id="setting-wa-token" placeholder="Paste Token API di sini..." class="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl font-mono focus:bg-white">
+                <span class="text-[11px] text-slate-400 mt-1 block">Dapatkan token dari dashboard fonnte.com atau wablas.com</span>
+              </div>
+            </div>
+
+            <!-- WhatsApp Test Tool -->
+            <div class="mt-4 p-4 bg-emerald-50 rounded-2xl border border-emerald-100 flex flex-col sm:flex-row gap-3 items-center">
+              <div class="flex-1">
+                <h4 class="text-xs font-bold text-emerald-900">Uji Coba Kirim WhatsApp</h4>
+                <p class="text-[11px] text-emerald-700">Kirim pesan tes ke nomor Anda untuk memastikan koneksi gateway berfungsi.</p>
+              </div>
+              <div class="flex gap-2 w-full sm:w-auto">
+                <input type="text" id="test-wa-phone" placeholder="081234567890" class="px-3 py-1.5 text-xs bg-white border border-emerald-200 rounded-xl focus:outline-none flex-1 sm:w-40">
+                <button type="button" onclick="testWhatsAppMessage()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs transition whitespace-nowrap">
+                  Kirim Tes
+                </button>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Message Templates -->
+          <div class="border-t border-slate-100 pt-6">
+            <h3 class="font-bold text-base text-slate-800 mb-3 flex items-center gap-2">
+              <i data-lucide="file-edit" class="w-5 h-5 text-indigo-600"></i>
+              Template Pesan WhatsApp
+            </h3>
+            
+            <div class="space-y-4">
+              <div>
+                <label class="block text-xs font-bold text-slate-700 mb-1">
+                  1. Template Tanda Terima (Receipt Pemesanan Baru)
+                </label>
+                <textarea id="setting-template-receipt" rows="7" class="w-full p-3 text-xs font-mono bg-slate-50 border border-slate-200 rounded-xl focus:bg-white"></textarea>
+                <span class="text-[11px] text-slate-400">Variabel: {{name}}, {{order_id}}, {{ticket_category}}, {{ticket_qty}}, {{total_amount}}, {{bank_list}}, {{contact_person}}</span>
+              </div>
+
+              <div>
+                <label class="block text-xs font-bold text-slate-700 mb-1">
+                  2. Template E-Tiket Resmi (Saat Verifikasi Disetujui)
+                </label>
+                <textarea id="setting-template-verified" rows="7" class="w-full p-3 text-xs font-mono bg-slate-50 border border-slate-200 rounded-xl focus:bg-white"></textarea>
+                <span class="text-[11px] text-slate-400">Variabel: {{name}}, {{order_id}}, {{ticket_category}}, {{ticket_qty}}, {{ticket_url}}, {{event_date}}, {{event_time}}, {{event_location}}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Save Button -->
+          <div class="pt-4 flex justify-end">
+            <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-6 py-2.5 rounded-xl transition shadow-md flex items-center gap-2 text-sm">
+              <i data-lucide="save" class="w-4 h-4"></i>
+              <span>Simpan Pengaturan</span>
+            </button>
+          </div>
+
+        </form>
+
+      </div>
+
+      <!-- Integration Guide Panel -->
+      <div id="settings-panel-guide" class="hidden space-y-6">
+        
+        <div class="bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-sm space-y-6">
+          
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+              <i data-lucide="sheet" class="w-5 h-5"></i>
+            </div>
+            <div>
+              <h2 class="text-lg font-bold text-slate-900">Panduan Integrasi Google Form ke Dashboard & WhatsApp</h2>
+              <p class="text-xs text-slate-500">Ikuti 5 langkah mudah berikut agar setiap pengisian form otomatis mengirim receipt WA dan masuk ke dashboard.</p>
+            </div>
+          </div>
+
+          <!-- Steps -->
+          <div class="space-y-4">
+            
+            <!-- Step 1 -->
+            <div class="p-4 bg-slate-50 rounded-2xl border border-slate-200">
+              <h4 class="font-bold text-sm text-slate-800 flex items-center gap-2">
+                <span class="w-5 h-5 rounded-full bg-indigo-600 text-white text-[11px] inline-flex items-center justify-center font-bold">1</span>
+                Siapkan Pertanyaan di Google Form
+              </h4>
+              <p class="text-xs text-slate-600 mt-1">Pastikan formulir Anda memiliki kolom pertanyaan berikut:</p>
+              <ul class="list-disc list-inside text-xs text-slate-600 mt-2 space-y-1 ml-2">
+                <li><strong>Nama Lengkap</strong> (Jawaban Singkat)</li>
+                <li><strong>Nomor WhatsApp</strong> (Jawaban Singkat - pastikan pembeli memasukkan nomor aktif, misal 0812xxxx)</li>
+                <li><strong>Kelas / Asal Instansi</strong> (Jawaban Singkat)</li>
+                <li><strong>Kategori Tiket</strong> (Pilihan Ganda: Presale, Reguler, VIP)</li>
+                <li><strong>Jumlah Tiket</strong> (Jawaban Singkat atau Angka)</li>
+                <li><strong>Metode Transfer</strong> (Pilihan Ganda: BCA, Mandiri, BRI, QRIS)</li>
+                <li><strong>Upload Bukti Transfer</strong> (File Upload Gambar)</li>
+              </ul>
+            </div>
+
+            <!-- Step 2 -->
+            <div class="p-4 bg-slate-50 rounded-2xl border border-slate-200">
+              <h4 class="font-bold text-sm text-slate-800 flex items-center gap-2">
+                <span class="w-5 h-5 rounded-full bg-indigo-600 text-white text-[11px] inline-flex items-center justify-center font-bold">2</span>
+                Buka Google Spreadsheet Terhubung
+              </h4>
+              <p class="text-xs text-slate-600 mt-1">
+                Pada tab <strong>Jawaban / Responses</strong> di Google Form, klik ikon hijau <strong>"Tautkan ke Spreadsheet"</strong> (Link to Sheets).
+              </p>
+            </div>
+
+            <!-- Step 3 -->
+            <div class="p-4 bg-slate-50 rounded-2xl border border-slate-200">
+              <h4 class="font-bold text-sm text-slate-800 flex items-center gap-2">
+                <span class="w-5 h-5 rounded-full bg-indigo-600 text-white text-[11px] inline-flex items-center justify-center font-bold">3</span>
+                Buka Google Apps Script
+              </h4>
+              <p class="text-xs text-slate-600 mt-1">
+                Di Google Spreadsheet tersebut, klik menu atas: <strong>Ekstensi &rarr; Apps Script</strong> (Extensions &rarr; Apps Script).
+              </p>
+            </div>
+
+            <!-- Step 4 -->
+            <div class="p-4 bg-slate-50 rounded-2xl border border-slate-200">
+              <div class="flex items-center justify-between mb-2">
+                <h4 class="font-bold text-sm text-slate-800 flex items-center gap-2">
+                  <span class="w-5 h-5 rounded-full bg-indigo-600 text-white text-[11px] inline-flex items-center justify-center font-bold">4</span>
+                  Salin Kode Google Apps Script di Bawah Ini
+                </h4>
+                <button onclick="copyAppsScriptCode()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition">
+                  <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                  <span id="copy-btn-text">Salin Kode</span>
+                </button>
+              </div>
+              <p class="text-xs text-slate-600 mb-2">Hapus semua isi di `Code.gs` dan paste kode di bawah ini:</p>
+              
+              <div class="relative">
+                <pre class="bg-slate-900 text-slate-100 p-4 rounded-xl text-[11px] font-mono overflow-x-auto max-h-96" id="gas-code-block"></pre>
+              </div>
+            </div>
+
+            <!-- Step 5 -->
+            <div class="p-4 bg-slate-50 rounded-2xl border border-slate-200">
+              <h4 class="font-bold text-sm text-slate-800 flex items-center gap-2">
+                <span class="w-5 h-5 rounded-full bg-indigo-600 text-white text-[11px] inline-flex items-center justify-center font-bold">5</span>
+                Pasang Pemicu (Trigger) "Saat Mengirim Formulir"
+              </h4>
+              <p class="text-xs text-slate-600 mt-1">
+                Di halaman Google Apps Script:
+              </p>
+              <ol class="list-decimal list-inside text-xs text-slate-600 mt-2 space-y-1 ml-2">
+                <li>Klik ikon jam di menu kiri: <strong>Pemicu (Triggers)</strong>.</li>
+                <li>Klik tombol biru <strong>+ Tambahkan Pemicu (+ Add Trigger)</strong> di kanan bawah.</li>
+                <li>Pilih fungsi yang akan dijalankan: <code class="bg-slate-200 px-1 py-0.5 rounded text-indigo-700">onFormSubmit</code></li>
+                <li>Pilih sumber acara: <strong>Dari spreadsheet (From spreadsheet)</strong></li>
+                <li>Pilih jenis acara: <strong>Saat mengirim formulir (On form submit)</strong></li>
+                <li>Klik <strong>Simpan (Save)</strong> dan izinkan hak akses Google akun Anda.</li>
+              </ol>
+              <div class="mt-3 bg-emerald-50 border border-emerald-200 text-emerald-800 p-3 rounded-xl text-xs font-medium">
+                🎉 Selesai! Sekarang setiap kali pembeli mengirim formulir Google Form, WhatsApp tanda terima akan langsung terkirim otomatis ke nomor pembeli dan data muncul di Dashboard ini!
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- ============================================== -->
+  <!-- MODAL: PREVIEW BUKTI TRANSFER & VERIFIKASI CEPAT -->
+  <!-- ============================================== -->
+  <div id="proof-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-3xl max-w-xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-150">
+      
+      <!-- Modal Header -->
+      <div class="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between">
+        <div>
+          <h3 class="font-bold text-base text-slate-900 flex items-center gap-2">
+            <span>Bukti Transfer</span>
+            <span id="modal-order-id" class="text-xs font-mono font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">TIX-0000</span>
+          </h3>
+          <p id="modal-buyer-name" class="text-xs text-slate-500">Nama Pembeli</p>
+        </div>
+        <button onclick="closeProofModal()" class="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition">
+          ✕
+        </button>
+      </div>
+
+      <!-- Modal Body (Image Preview) -->
+      <div class="p-4 flex-1 overflow-y-auto flex flex-col items-center justify-center bg-slate-900 min-h-[300px]">
+        <img id="modal-proof-img" src="" alt="Bukti Transfer" class="max-h-[55vh] max-w-full object-contain rounded-lg shadow-md hidden">
+        <div id="modal-no-img" class="text-center p-8 text-slate-400">
+          <i data-lucide="image-off" class="w-12 h-12 mx-auto mb-2 text-slate-500"></i>
+          <p class="text-sm">Pembeli tidak melampirkan foto bukti transfer atau link eksternal.</p>
+          <a id="modal-proof-link" href="#" target="_blank" class="inline-block mt-3 text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-lg hover:bg-indigo-700 hidden">Buka Link Bukti di Tab Baru</a>
+        </div>
+      </div>
+
+      <!-- Modal Details -->
+      <div class="p-4 bg-slate-50 border-t border-slate-100 text-xs text-slate-600 flex justify-between items-center">
+        <div>
+          <span>Total Tagihan:</span>
+          <strong class="text-sm text-slate-900 block" id="modal-total-amount">Rp 0</strong>
+        </div>
+        <div class="text-right">
+          <span>Metode:</span>
+          <strong class="text-slate-800 block" id="modal-payment-method">Transfer Bank</strong>
+        </div>
+      </div>
+
+      <!-- Modal Actions -->
+      <div class="p-4 bg-white border-t border-slate-100 flex gap-2 justify-end" id="modal-action-buttons">
+        <!-- populated dynamically -->
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ============================================== -->
+  <!-- MODAL: REJECT REASON -->
+  <!-- ============================================== -->
+  <div id="reject-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl">
+      <h3 class="font-bold text-base text-slate-900 mb-2">Tolak Bukti Pembayaran</h3>
+      <p class="text-xs text-slate-500 mb-4">Pesan penolakan beserta alasan ini akan otomatis dikirimkan ke WhatsApp pembeli agar mereka dapat mengirimkan bukti yang valid.</p>
+
+      <form onsubmit="handleRejectSubmit(event)">
+        <input type="hidden" id="reject-order-id">
+        <div class="space-y-3">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 mb-1">Alasan Penolakan</label>
+            <select id="reject-preset" onchange="applyRejectPreset()" class="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 mb-2">
+              <option value="Nominal transfer tidak sesuai dengan jumlah tagihan tiket.">Nominal transfer tidak sesuai</option>
+              <option value="Bukti transfer buram atau tidak terbaca.">Bukti transfer buram / tidak jelas</option>
+              <option value="Dana belum masuk ke rekening mutasi bank panitia.">Dana belum masuk mutasi bank</option>
+              <option value="custom">Alasan Lainnya (Tulis sendiri)</option>
+            </select>
+            <textarea id="reject-reason" rows="3" required placeholder="Tulis rincian alasan penolakan..." class="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-3 focus:bg-white"></textarea>
+          </div>
+        </div>
+
+        <div class="mt-6 flex gap-2 justify-end">
+          <button type="button" onclick="closeRejectModal()" class="px-4 py-2 text-xs font-semibold rounded-xl text-slate-600 hover:bg-slate-100">Batal</button>
+          <button type="submit" class="bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-4 py-2 rounded-xl transition shadow-sm">Tolak & Kirim WA</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ============================================== -->
+  <!-- MODAL: SINKRONISASI GOOGLE SPREADSHEET -->
+  <!-- ============================================== -->
+  <div id="sheet-sync-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl animate-in fade-in zoom-in duration-150">
+      <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+            <i data-lucide="sheet" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h3 class="font-bold text-base text-slate-900">Sinkronisasi Google Spreadsheet</h3>
+            <p class="text-xs text-slate-500">Tarik data pembeli dari spreadsheet langsung ke dashboard</p>
+          </div>
+        </div>
+        <button onclick="closeSheetSyncModal()" class="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition">✕</button>
+      </div>
+
+      <form onsubmit="handleGoogleSheetSync(event)" class="space-y-4">
+        <div>
+          <label class="block text-xs font-bold text-slate-700 mb-1">Link Google Spreadsheet Respon Form *</label>
+          <input type="url" id="sheet-sync-url" required placeholder="https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5.../edit" class="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-mono focus:bg-white focus:ring-2 focus:ring-emerald-500">
+          
+          <div class="mt-3 p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 leading-relaxed">
+            <div class="font-bold flex items-center gap-1.5 mb-1 text-amber-950">
+              <i data-lucide="info" class="w-4 h-4 text-amber-600"></i>
+              Petunjuk Izin Akses Spreadsheet:
+            </div>
+            <ol class="list-decimal list-inside space-y-1 text-[11px] text-amber-900 ml-1">
+              <li>Buka Google Spreadsheet respon formulir tiket Anda.</li>
+              <li>Klik tombol <strong>"Bagikan" (Share)</strong> di pojok kanan atas.</li>
+              <li>Pada <em>Akses Umum</em>, ubah menjadi <strong>"Siapa saja yang memiliki link dapat melihat"</strong> (Anyone with the link can view).</li>
+              <li>Salin link spreadsheet tersebut dan tempelkan pada kolom di atas.</li>
+            </ol>
+          </div>
+        </div>
+
+        <div class="pt-1">
+          <label class="flex items-center gap-2 cursor-pointer bg-slate-50 p-3 rounded-xl border border-slate-200">
+            <input type="checkbox" id="sync-send-wa" class="w-4 h-4 text-emerald-600 rounded">
+            <span class="text-xs text-slate-700 font-semibold">Kirim WhatsApp tanda terima otomatis untuk pesanan baru hasil sinkronisasi</span>
+          </label>
+        </div>
+
+        <div class="pt-2 flex gap-2 justify-end">
+          <button type="button" onclick="closeSheetSyncModal()" class="px-4 py-2 text-xs font-semibold rounded-xl text-slate-600 hover:bg-slate-100">Batal</button>
+          <button type="submit" id="sync-submit-btn" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-5 py-2.5 rounded-xl transition shadow-md flex items-center gap-1.5">
+            <i data-lucide="refresh-cw" class="w-4 h-4" id="sync-btn-spinner"></i>
+            <span id="sync-btn-label">Tarik & Sinkronkan Sekarang</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="fixed bottom-6 right-6 z-50 transform translate-y-24 opacity-0 transition-all duration-300 pointer-events-none">
+    <div id="toast-box" class="bg-slate-900 text-white px-5 py-3 rounded-2xl shadow-xl text-xs font-semibold flex items-center gap-2">
+      <span id="toast-icon">✓</span>
+      <span id="toast-msg">Notifikasi</span>
+    </div>
+  </div>
+
+  <!-- App Script Logic -->
+  <script src="/app.js"></script>
+</body>
+</html>
