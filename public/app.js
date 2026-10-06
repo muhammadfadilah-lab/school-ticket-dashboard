@@ -36,6 +36,11 @@ function refreshData() {
 // NAVIGATION & TABS
 // ==========================================
 function switchTab(tabId) {
+  // If leaving checkin tab and camera is active, turn it off to save resources
+  if (tabId !== 'checkin' && isScannerRunning) {
+    stopCameraScanner();
+  }
+
   const tabs = ['overview', 'orders', 'recap', 'checkin', 'manual', 'settings'];
   tabs.forEach(t => {
     const content = document.getElementById(`tab-content-${t}`);
@@ -597,12 +602,277 @@ function closeProofModal() {
 }
 
 // ==========================================
-// CHECK-IN GATE
+// CHECK-IN GATE: BARCODE & QR CODE SCANNER (CAMERA)
 // ==========================================
-async function handleCheckinSubmit(e) {
-  e.preventDefault();
+let html5QrScannerInstance = null;
+let isScannerRunning = false;
+let isScanThrottled = false;
+let availableCameraDevices = [];
+let currentCameraIndex = 0;
+
+// Audio synthesized feedback (Web Audio API)
+function playBeepSound(type = 'success') {
+  try {
+    const soundToggle = document.getElementById('scanner-sound-toggle');
+    if (soundToggle && !soundToggle.checked) return;
+
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    const ctx = new AudioContext();
+
+    if (type === 'success') {
+      // Pleasant high double beep (Ding-Dong)
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, ctx.currentTime); // A5
+      osc.frequency.setValueAtTime(1174.66, ctx.currentTime + 0.1); // D6
+      gain.gain.setValueAtTime(0.35, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.35);
+    } else if (type === 'warning') {
+      // Sawtooth warning buzz (already checked-in duplicate)
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(320, ctx.currentTime);
+      osc.frequency.setValueAtTime(240, ctx.currentTime + 0.15);
+      gain.gain.setValueAtTime(0.35, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.45);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.45);
+    } else {
+      // Low error buzz (invalid or unpaid)
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(200, ctx.currentTime);
+      gain.gain.setValueAtTime(0.35, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.35);
+    }
+  } catch (e) {
+    console.warn('Audio playback error:', e);
+  }
+}
+
+// Smart ticket code extractor (supports raw text, JSON payload, and URL query params)
+function extractTicketCode(rawText) {
+  if (!rawText) return '';
+  const text = String(rawText).trim();
+
+  // 1. Check if payload is a JSON string (used by default E-Ticket QR Code)
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed.order_id) return String(parsed.order_id).trim().toUpperCase();
+    if (parsed.id) return String(parsed.id).trim().toUpperCase();
+  } catch (e) {}
+
+  // 2. Check for TIX-XXXX pattern (case-insensitive)
+  const tixMatch = text.match(/TIX-[A-Z0-9_-]+/i);
+  if (tixMatch) return tixMatch[0].toUpperCase();
+
+  // 3. Check if payload is a URL (e.g., ticket.html?id=TIX-XXXX)
+  try {
+    if (text.includes('?') || text.startsWith('http')) {
+      const url = new URL(text, window.location.origin);
+      const idParam = url.searchParams.get('id');
+      if (idParam) return idParam.trim().toUpperCase();
+    }
+  } catch (e) {}
+
+  return text.toUpperCase();
+}
+
+async function toggleCameraScanner() {
+  if (isScannerRunning) {
+    await stopCameraScanner();
+  } else {
+    await startCameraScanner();
+  }
+}
+
+async function startCameraScanner() {
+  const wrapper = document.getElementById('scanner-wrapper');
+  const btnLabel = document.getElementById('btn-toggle-scanner-label');
+  const toggleBtn = document.getElementById('btn-toggle-scanner');
+  const switchBtn = document.getElementById('btn-switch-camera');
+  const statusBadge = document.getElementById('scanner-status-badge');
+
+  if (typeof Html5Qrcode === 'undefined') {
+    alert('Library kamera (Html5Qrcode) belum selesai dimuat dari CDN. Silakan pastikan koneksi internet aktif dan muat ulang halaman.');
+    return;
+  }
+
+  wrapper.classList.remove('hidden');
+  if (statusBadge) {
+    statusBadge.innerHTML = `
+      <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+      <span>Menghubungkan ke kamera perangkat...</span>
+    `;
+  }
+
+  try {
+    if (!html5QrScannerInstance) {
+      html5QrScannerInstance = new Html5Qrcode("qr-reader");
+    }
+
+    // Discover available camera devices
+    try {
+      availableCameraDevices = await Html5Qrcode.getCameras();
+      if (availableCameraDevices && availableCameraDevices.length > 1) {
+        switchBtn.classList.remove('hidden');
+      } else {
+        switchBtn.classList.add('hidden');
+      }
+    } catch (camErr) {
+      console.warn('Could not enumerate cameras:', camErr);
+    }
+
+    const qrConfig = {
+      fps: 15,
+      qrbox: (viewfinderWidth, viewfinderHeight) => {
+        const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+        const qrboxSize = Math.max(180, Math.floor(minEdge * 0.72));
+        return { width: qrboxSize, height: qrboxSize };
+      },
+      aspectRatio: 1.0
+    };
+
+    // Camera selector: Use rear camera on phones or device ID
+    let cameraToUse = { facingMode: "environment" };
+    if (availableCameraDevices && availableCameraDevices.length > 0) {
+      if (currentCameraIndex >= availableCameraDevices.length) {
+        currentCameraIndex = 0;
+      }
+      cameraToUse = availableCameraDevices[currentCameraIndex].id;
+    }
+
+    await html5QrScannerInstance.start(
+      cameraToUse,
+      qrConfig,
+      onCameraScanSuccess,
+      onCameraScanError
+    );
+
+    isScannerRunning = true;
+    if (btnLabel) btnLabel.textContent = 'Matikan Scanner Kamera';
+    if (toggleBtn) {
+      toggleBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
+      toggleBtn.classList.add('bg-red-600', 'hover:bg-red-700');
+    }
+
+    if (statusBadge) {
+      statusBadge.innerHTML = `
+        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+        <span>Kamera Aktif • Arahkan ke Barcode / QR Tiket</span>
+      `;
+    }
+    if (window.lucide) lucide.createIcons();
+  } catch (err) {
+    console.error('Failed to start camera:', err);
+    wrapper.classList.add('hidden');
+    isScannerRunning = false;
+    if (btnLabel) btnLabel.textContent = 'Buka Scanner Kamera';
+    if (toggleBtn) {
+      toggleBtn.classList.remove('bg-red-600', 'hover:bg-red-700');
+      toggleBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
+    }
+    alert(
+      'Gagal membuka kamera:\n' + (err.message || err) +
+      '\n\nCatatan:\n' +
+      '1. Pastikan Anda telah mengizinkan izin Kamera pada browser (Izinkan / Allow).\n' +
+      '2. Pada perangkat seluler, gunakan browser Chrome atau Safari.\n' +
+      '3. Jika kamera sedang dipakai aplikasi lain, silakan tutup aplikasi tersebut.'
+    );
+  }
+}
+
+async function stopCameraScanner() {
+  if (html5QrScannerInstance && isScannerRunning) {
+    try {
+      await html5QrScannerInstance.stop();
+    } catch (e) {
+      console.warn('Error stopping scanner:', e);
+    }
+    isScannerRunning = false;
+  }
+  const wrapper = document.getElementById('scanner-wrapper');
+  if (wrapper) wrapper.classList.add('hidden');
+  const btnLabel = document.getElementById('btn-toggle-scanner-label');
+  if (btnLabel) btnLabel.textContent = 'Buka Scanner Kamera';
+  const toggleBtn = document.getElementById('btn-toggle-scanner');
+  if (toggleBtn) {
+    toggleBtn.classList.remove('bg-red-600', 'hover:bg-red-700');
+    toggleBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
+  }
+  const switchBtn = document.getElementById('btn-switch-camera');
+  if (switchBtn) switchBtn.classList.add('hidden');
+  if (window.lucide) lucide.createIcons();
+}
+
+async function switchScannerCamera() {
+  if (!availableCameraDevices || availableCameraDevices.length < 2) return;
+  currentCameraIndex = (currentCameraIndex + 1) % availableCameraDevices.length;
+  if (isScannerRunning) {
+    await stopCameraScanner();
+    await startCameraScanner();
+  }
+}
+
+async function onCameraScanSuccess(decodedText, decodedResult) {
+  if (isScanThrottled) return;
+  isScanThrottled = true;
+
+  const ticketCode = extractTicketCode(decodedText);
+  if (!ticketCode) {
+    isScanThrottled = false;
+    return;
+  }
+
+  // Update badge to scanning state
+  const statusBadge = document.getElementById('scanner-status-badge');
+  if (statusBadge) {
+    statusBadge.innerHTML = `
+      <span class="w-2 h-2 rounded-full bg-indigo-400 animate-spin"></span>
+      <span>Memvalidasi Tiket: <strong>${escapeHtml(ticketCode)}</strong>...</span>
+    `;
+  }
+
+  // Fill manual input field as well for visual clarity
   const input = document.getElementById('checkin-input');
-  const code = input.value.trim().toUpperCase();
+  if (input) input.value = ticketCode;
+
+  // Perform checkin
+  await executeCheckin(ticketCode);
+
+  // Resume camera scanning after 2.5 seconds to prevent accidental duplicate reads
+  setTimeout(() => {
+    isScanThrottled = false;
+    if (isScannerRunning && statusBadge) {
+      statusBadge.innerHTML = `
+        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+        <span>Kamera Aktif • Arahkan ke Barcode / QR Tiket</span>
+      `;
+    }
+  }, 2500);
+}
+
+function onCameraScanError(errorMessage) {
+  // Frame scan misses are standard while camera is aiming, keep silent
+}
+
+// Execute check-in logic (called by both camera scanner and manual form)
+async function executeCheckin(codeToValidate) {
+  const code = (codeToValidate || '').trim().toUpperCase();
   if (!code) return;
 
   const resultContainer = document.getElementById('checkin-result');
@@ -610,7 +880,7 @@ async function handleCheckinSubmit(e) {
   resultContainer.innerHTML = `
     <div class="flex items-center gap-2 text-xs text-slate-500">
       <div class="inline-block animate-spin rounded-full h-4 w-4 border-2 border-indigo-600 border-t-transparent"></div>
-      <span>Memeriksa database tiket...</span>
+      <span>Memeriksa kode tiket <strong>${escapeHtml(code)}</strong> di database...</span>
     </div>
   `;
   resultContainer.classList.remove('hidden');
@@ -622,64 +892,95 @@ async function handleCheckinSubmit(e) {
     const result = await res.json();
 
     if (res.status === 200 && result.success) {
-      // SUCCESS CHECK-IN
+      // 1. SUCCESS CHECK-IN
+      playBeepSound('success');
       const order = result.data;
-      resultContainer.className = 'mt-6 text-left p-6 rounded-2xl border-2 border-emerald-500 bg-emerald-50 text-emerald-950 animate-in zoom-in-95 duration-150';
+      resultContainer.className = 'mt-6 text-left p-6 rounded-2xl border-2 border-emerald-500 bg-emerald-50 text-emerald-950 shadow-md animate-in zoom-in-95 duration-150';
       resultContainer.innerHTML = `
         <div class="flex items-start gap-4">
-          <div class="w-12 h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center flex-shrink-0 text-2xl font-bold">✓</div>
+          <div class="w-12 h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center flex-shrink-0 text-2xl font-bold shadow-sm">✓</div>
           <div class="flex-1">
-            <span class="inline-block px-2 py-0.5 rounded bg-emerald-200 text-emerald-900 font-bold text-[11px] uppercase tracking-wider mb-1">AKSES DITERIMA - CHECK-IN BERHASIL</span>
-            <h3 class="text-lg font-black text-emerald-950">${escapeHtml(order.name)}</h3>
-            <p class="text-xs text-emerald-800">${escapeHtml(order.institution || 'Umum')} • ${order.phone}</p>
-            <div class="mt-3 grid grid-cols-2 gap-2 text-xs bg-white/60 p-3 rounded-xl">
+            <span class="inline-block px-2.5 py-0.5 rounded-full bg-emerald-200 text-emerald-900 font-bold text-[11px] uppercase tracking-wider mb-1">AKSES DITERIMA • CHECK-IN BERHASIL</span>
+            <h3 class="text-xl font-black text-emerald-950">${escapeHtml(order.name)}</h3>
+            <p class="text-xs text-emerald-800 font-medium">${escapeHtml(order.performance_session || 'Sesi Umum')} • ${escapeHtml(order.institution || 'Umum')} • ${order.phone}</p>
+            
+            <div class="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs bg-white/70 p-3 rounded-xl border border-emerald-100">
               <div>
-                <span class="text-emerald-700 block text-[10px]">KATEGORI & JUMLAH</span>
-                <strong class="text-sm font-bold">${order.ticket_category} (${order.ticket_qty} Tiket)</strong>
+                <span class="text-emerald-700 block text-[10px] font-semibold">KODE TIKET</span>
+                <strong class="text-sm font-mono font-bold text-slate-800">${escapeHtml(order.order_id)}</strong>
               </div>
               <div>
-                <span class="text-emerald-700 block text-[10px]">WAKTU CHECK-IN</span>
-                <strong class="text-sm font-bold">${new Date(order.checked_in_at).toLocaleTimeString('id-ID')} WIB</strong>
+                <span class="text-emerald-700 block text-[10px] font-semibold">JUMLAH TIKET</span>
+                <strong class="text-sm font-bold text-slate-800">${order.ticket_qty} Tiket (Pax)</strong>
               </div>
+              <div class="col-span-2 sm:col-span-1">
+                <span class="text-emerald-700 block text-[10px] font-semibold">WAKTU MASUK</span>
+                <strong class="text-sm font-bold text-slate-800">${new Date(order.checked_in_at || Date.now()).toLocaleTimeString('id-ID')} WIB</strong>
+              </div>
+            </div>
+            
+            <div class="mt-3 flex items-center justify-between">
+              <span class="text-[11px] text-emerald-700 font-medium">Silakan persilakan tamu memasuki aula/venue acara.</span>
+              <button onclick="document.getElementById('checkin-result').classList.add('hidden')" class="text-xs font-semibold text-emerald-800 hover:text-emerald-950 underline">Tutup Hasil</button>
             </div>
           </div>
         </div>
       `;
-      input.value = '';
+      const input = document.getElementById('checkin-input');
+      if (input) input.value = '';
       loadStats();
     } else if (res.status === 409) {
-      // ALREADY CHECKED IN WARNING!
+      // 2. WARNING: ALREADY CHECKED IN
+      playBeepSound('warning');
       const order = result.data;
-      resultContainer.className = 'mt-6 text-left p-6 rounded-2xl border-2 border-red-500 bg-red-50 text-red-950';
+      resultContainer.className = 'mt-6 text-left p-6 rounded-2xl border-2 border-red-500 bg-red-50 text-red-950 shadow-md';
       resultContainer.innerHTML = `
         <div class="flex items-start gap-4">
-          <div class="w-12 h-12 rounded-2xl bg-red-600 text-white flex items-center justify-center flex-shrink-0 text-2xl font-bold">✕</div>
+          <div class="w-12 h-12 rounded-2xl bg-red-600 text-white flex items-center justify-center flex-shrink-0 text-2xl font-bold shadow-sm">✕</div>
           <div class="flex-1">
-            <span class="inline-block px-2 py-0.5 rounded bg-red-200 text-red-900 font-bold text-[11px] uppercase tracking-wider mb-1">PERINGATAN: TIKET SUDAH PERNAH DIGUNAKAN!</span>
-            <h3 class="text-lg font-black text-red-950">${result.message}</h3>
-            <p class="text-xs text-red-800 mt-1">Pemegang Tiket: <strong>${escapeHtml(order ? order.name : '-')}</strong></p>
-            <p class="text-[11px] text-red-700 mt-2">Dilarang masuk dua kali dengan tiket yang sama. Periksa identitas pembawa tiket.</p>
+            <span class="inline-block px-2.5 py-0.5 rounded-full bg-red-200 text-red-900 font-bold text-[11px] uppercase tracking-wider mb-1">PERINGATAN: TIKET SUDAH DIGUNAKAN!</span>
+            <h3 class="text-lg font-black text-red-950">${escapeHtml(result.message)}</h3>
+            <p class="text-xs text-red-800 mt-1">Pemegang Tiket: <strong>${escapeHtml(order ? order.name : '-')}</strong> (${escapeHtml(order ? (order.performance_session || '-') : '-')})</p>
+            <p class="text-[11px] text-red-700 mt-2 bg-red-100/70 p-2.5 rounded-xl border border-red-200 font-medium">
+              ⚠️ Dilarang masuk dua kali dengan tiket yang sama. Periksa fisik tiket atau identitas pembawa tiket.
+            </p>
+            <div class="mt-2 text-right">
+              <button onclick="document.getElementById('checkin-result').classList.add('hidden')" class="text-xs font-semibold text-red-800 hover:text-red-950 underline">Tutup</button>
+            </div>
           </div>
         </div>
       `;
     } else {
-      // NOT VERIFIED / NOT FOUND
-      resultContainer.className = 'mt-6 text-left p-6 rounded-2xl border-2 border-amber-500 bg-amber-50 text-amber-950';
+      // 3. REJECTED / NOT FOUND / UNPAID
+      playBeepSound('error');
+      resultContainer.className = 'mt-6 text-left p-6 rounded-2xl border-2 border-amber-500 bg-amber-50 text-amber-950 shadow-md';
       resultContainer.innerHTML = `
         <div class="flex items-start gap-4">
-          <div class="w-12 h-12 rounded-2xl bg-amber-500 text-white flex items-center justify-center flex-shrink-0 text-2xl font-bold">!</div>
+          <div class="w-12 h-12 rounded-2xl bg-amber-500 text-white flex items-center justify-center flex-shrink-0 text-2xl font-bold shadow-sm">!</div>
           <div class="flex-1">
-            <span class="inline-block px-2 py-0.5 rounded bg-amber-200 text-amber-900 font-bold text-[11px] uppercase tracking-wider mb-1">AKSES DITOLAK</span>
-            <h3 class="text-base font-bold text-amber-950">${result.message || 'Tiket tidak valid'}</h3>
-            <p class="text-xs text-amber-800 mt-1">Pastikan status tiket sudah diverifikasi LUNAS oleh bendahara sebelum tamu dapat masuk.</p>
+            <span class="inline-block px-2.5 py-0.5 rounded-full bg-amber-200 text-amber-900 font-bold text-[11px] uppercase tracking-wider mb-1">AKSES DITOLAK / TIDAK VALID</span>
+            <h3 class="text-base font-bold text-amber-950">${escapeHtml(result.message || 'Tiket tidak ditemukan')}</h3>
+            <p class="text-xs text-amber-800 mt-1">Pastikan tiket sudah berstatus LUNAS (terverifikasi oleh panitia) sebelum tamu dapat melakukan check-in.</p>
+            <div class="mt-2 text-right">
+              <button onclick="document.getElementById('checkin-result').classList.add('hidden')" class="text-xs font-semibold text-amber-800 hover:text-amber-950 underline">Tutup</button>
+            </div>
           </div>
         </div>
       `;
     }
   } catch (err) {
+    playBeepSound('error');
     resultContainer.className = 'mt-6 text-left p-5 rounded-2xl border border-red-200 bg-red-50 text-red-800 text-xs';
     resultContainer.textContent = 'Terjadi kesalahan sistem: ' + err.message;
   }
+}
+
+async function handleCheckinSubmit(e) {
+  e.preventDefault();
+  const input = document.getElementById('checkin-input');
+  const code = (input.value || '').trim();
+  if (!code) return;
+  await executeCheckin(code);
 }
 
 // ==========================================

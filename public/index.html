@@ -12,6 +12,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <!-- Lucide Icons -->
   <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- HTML5 QR Code & Barcode Scanner -->
+  <script src="https://unpkg.com/html5-qrcode"></script>
   <style>
     body { font-family: 'Plus Jakarta Sans', sans-serif; }
     .font-mono { font-family: 'JetBrains Mono', monospace; }
@@ -21,6 +23,33 @@
     @keyframes pulse {
       0%, 100% { opacity: 1; }
       50% { opacity: .5; }
+    }
+    /* QR & Barcode Camera Scanner Styling */
+    #qr-reader {
+      width: 100% !important;
+      border: none !important;
+      background: transparent !important;
+    }
+    #qr-reader video {
+      width: 100% !important;
+      max-height: 380px !important;
+      border-radius: 0.75rem !important;
+      object-fit: cover !important;
+    }
+    #qr-reader__scan_region {
+      background: transparent !important;
+    }
+    #qr-reader__dashboard {
+      padding: 0 !important;
+    }
+    #qr-reader__dashboard_section_csr button {
+      background-color: #4f46e5 !important;
+      color: white !important;
+      padding: 6px 14px !important;
+      border-radius: 8px !important;
+      font-size: 12px !important;
+      border: none !important;
+      cursor: pointer !important;
     }
     @media print {
       header, nav, #pending-alert-banner, button, a[href^="/api"], .no-print {
@@ -435,13 +464,54 @@
         </div>
         <h2 class="text-xl font-bold text-slate-900">Validasi & Check-in Tiket Masuk</h2>
         <p class="text-xs sm:text-sm text-slate-500 mt-1 max-w-md mx-auto">
-          Gunakan panel ini saat hari H acara sekolah. Masukkan nomor tiket dari pembeli atau scan QR Code untuk memvalidasi akses masuk.
+          Scan QR Code atau Barcode tiket menggunakan kamera ponsel/laptop untuk memvalidasi akses masuk tamu secara cepat di gerbang acara.
         </p>
 
-        <!-- Input Box -->
-        <form onsubmit="handleCheckinSubmit(event)" class="mt-6 flex flex-col sm:flex-row gap-2">
+        <!-- Scanner Controls: Open Camera, Switch Cam, Audio Beep -->
+        <div class="mt-6 flex flex-wrap items-center justify-center gap-2.5">
+          <button id="btn-toggle-scanner" onclick="toggleCameraScanner()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-5 py-2.5 rounded-xl transition flex items-center gap-2 shadow-md text-sm">
+            <i data-lucide="camera" class="w-4 h-4"></i>
+            <span id="btn-toggle-scanner-label">Buka Scanner Kamera</span>
+          </button>
+          
+          <button id="btn-switch-camera" onclick="switchScannerCamera()" class="hidden bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold px-4 py-2.5 rounded-xl transition flex items-center gap-2 text-xs">
+            <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+            <span>Ganti Kamera Depan/Belakang</span>
+          </button>
+
+          <!-- Audio Toggle -->
+          <label class="flex items-center gap-2 text-xs text-slate-600 bg-slate-50 hover:bg-slate-100 px-3.5 py-2.5 rounded-xl border border-slate-200 cursor-pointer select-none">
+            <input type="checkbox" id="scanner-sound-toggle" checked class="w-4 h-4 text-indigo-600 rounded accent-indigo-600">
+            <span>🔊 Suara Beep</span>
+          </label>
+        </div>
+
+        <!-- Camera Viewfinder Box -->
+        <div id="scanner-wrapper" class="hidden mt-6 relative max-w-md mx-auto bg-slate-950 rounded-2xl p-3 border-2 border-indigo-500 shadow-xl">
+          <div class="relative overflow-hidden rounded-xl bg-black min-h-[260px] flex flex-col items-center justify-center">
+            <div id="qr-reader" class="w-full"></div>
+            <!-- Status overlay badge -->
+            <div id="scanner-status-badge" class="absolute top-3 left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur-md text-emerald-400 text-[11px] font-semibold px-3 py-1.5 rounded-full border border-emerald-500/30 flex items-center gap-1.5 z-10 whitespace-nowrap shadow-md">
+              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+              <span>Kamera Aktif • Arahkan ke Barcode / QR Tiket</span>
+            </div>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-2 text-center">
+            Posisikan Barcode atau QR Code tiket di dalam area pandang kamera. Sistem akan membaca tiket secara otomatis.
+          </p>
+        </div>
+
+        <!-- Separator -->
+        <div class="relative flex py-5 items-center my-1">
+          <div class="flex-grow border-t border-slate-200"></div>
+          <span class="flex-shrink mx-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Atau Ketik Kode Manual</span>
+          <div class="flex-grow border-t border-slate-200"></div>
+        </div>
+
+        <!-- Manual Input Box -->
+        <form onsubmit="handleCheckinSubmit(event)" class="flex flex-col sm:flex-row gap-2">
           <input type="text" id="checkin-input" placeholder="Masukkan Kode Tiket (cth: TIX-1002)..." class="flex-1 px-4 py-3 text-base bg-slate-50 border-2 border-slate-200 rounded-xl font-mono uppercase focus:bg-white focus:outline-none focus:border-indigo-600 transition" required>
-          <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-6 py-3 rounded-xl transition flex items-center justify-center gap-2 shadow-md">
+          <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-6 py-3 rounded-xl transition flex items-center justify-center gap-2 shadow-md text-sm">
             <i data-lucide="check-circle" class="w-5 h-5"></i>
             <span>Periksa & Masuk</span>
           </button>
