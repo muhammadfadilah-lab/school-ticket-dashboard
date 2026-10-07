@@ -15,6 +15,22 @@ async function initApp() {
   await loadOrders();
   generateAppsScriptTemplate();
   
+  // Auto-sync spreadsheet in background when opening dashboard if configured
+  if (currentSettings.google_sheet_url && currentSettings.auto_sync_enabled !== false && currentSettings.auto_sync_enabled !== 'false') {
+    fetch('/api/sync/google-sheet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sheet_url: currentSettings.google_sheet_url, send_wa: false })
+    }).then(r => r.json()).then(res => {
+      if (res.success && res.data.newOrders > 0) {
+        showToast(`Tersinkron otomatis: ${res.data.newOrders} pesanan baru dari Spreadsheet`, 'info');
+        loadStats();
+        loadOrders();
+        if (typeof loadSessionRecap === 'function') loadSessionRecap();
+      }
+    }).catch(() => {});
+  }
+
   // Auto refresh stats every 30 seconds
   setInterval(() => {
     loadStats();
@@ -24,7 +40,23 @@ async function initApp() {
 function refreshData() {
   const icon = document.getElementById('refresh-icon');
   if (icon) icon.classList.add('animate-spin');
-  Promise.all([loadStats(), loadOrders()]).finally(() => {
+  
+  const tasks = [loadStats(), loadOrders()];
+  if (currentSettings.google_sheet_url && currentSettings.auto_sync_enabled !== false && currentSettings.auto_sync_enabled !== 'false') {
+    tasks.push(
+      fetch('/api/sync/google-sheet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sheet_url: currentSettings.google_sheet_url, send_wa: false })
+      }).then(r => r.json()).then(res => {
+        if (res.success && res.data.newOrders > 0) {
+          showToast(`Tersinkron: ${res.data.newOrders} data baru dari Spreadsheet`, 'info');
+        }
+      }).catch(() => {})
+    );
+  }
+
+  Promise.all(tasks).finally(() => {
     setTimeout(() => {
       if (icon) icon.classList.remove('animate-spin');
       showToast('Data berhasil diperbarui', 'success');
@@ -606,7 +638,10 @@ function closeProofModal() {
 // ==========================================
 let html5QrScannerInstance = null;
 let isScannerRunning = false;
-let isScanThrottled = false;
+let isScanLocked = false;
+let lastScannedTicketCode = null;
+let lastScannedTime = 0;
+let resumeTimerId = null;
 let availableCameraDevices = [];
 let currentCameraIndex = 0;
 
@@ -764,6 +799,7 @@ async function startCameraScanner() {
     );
 
     isScannerRunning = true;
+    isScanLocked = false;
     if (btnLabel) btnLabel.textContent = 'Matikan Scanner Kamera';
     if (toggleBtn) {
       toggleBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
@@ -797,6 +833,11 @@ async function startCameraScanner() {
 }
 
 async function stopCameraScanner() {
+  if (resumeTimerId) {
+    clearTimeout(resumeTimerId);
+    resumeTimerId = null;
+  }
+  isScanLocked = false;
   if (html5QrScannerInstance && isScannerRunning) {
     try {
       await html5QrScannerInstance.stop();
@@ -829,16 +870,32 @@ async function switchScannerCamera() {
 }
 
 async function onCameraScanSuccess(decodedText, decodedResult) {
-  if (isScanThrottled) return;
-  isScanThrottled = true;
+  // 1. Strict lock to prevent any multi-frame race condition
+  if (isScanLocked) return;
 
   const ticketCode = extractTicketCode(decodedText);
-  if (!ticketCode) {
-    isScanThrottled = false;
+  if (!ticketCode) return;
+
+  // 2. Prevent scanning the exact same code twice within 15 seconds
+  if (ticketCode === lastScannedTicketCode && (Date.now() - lastScannedTime < 15000)) {
     return;
   }
 
-  // Update badge to scanning state
+  // 3. Immediately engage locks
+  isScanLocked = true;
+  lastScannedTicketCode = ticketCode;
+  lastScannedTime = Date.now();
+
+  // 4. FREEZE camera scanning physically so no subsequent frames are processed while reviewing result
+  try {
+    if (html5QrScannerInstance && isScannerRunning) {
+      html5QrScannerInstance.pause(true);
+    }
+  } catch (pauseErr) {
+    console.warn('Camera pause error:', pauseErr);
+  }
+
+  // Update status badge
   const statusBadge = document.getElementById('scanner-status-badge');
   if (statusBadge) {
     statusBadge.innerHTML = `
@@ -847,33 +904,84 @@ async function onCameraScanSuccess(decodedText, decodedResult) {
     `;
   }
 
-  // Fill manual input field as well for visual clarity
+  // Fill manual input for visual consistency
   const input = document.getElementById('checkin-input');
   if (input) input.value = ticketCode;
 
-  // Perform checkin
+  // 5. Execute check-in validation
   await executeCheckin(ticketCode);
-
-  // Resume camera scanning after 2.5 seconds to prevent accidental duplicate reads
-  setTimeout(() => {
-    isScanThrottled = false;
-    if (isScannerRunning && statusBadge) {
-      statusBadge.innerHTML = `
-        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-        <span>Kamera Aktif • Arahkan ke Barcode / QR Tiket</span>
-      `;
-    }
-  }, 2500);
 }
 
 function onCameraScanError(errorMessage) {
   // Frame scan misses are standard while camera is aiming, keep silent
 }
 
+// Resumes camera scanning for the next attendee
+function resumeCameraScanning() {
+  if (resumeTimerId) {
+    clearTimeout(resumeTimerId);
+    resumeTimerId = null;
+  }
+  isScanLocked = false;
+  lastScannedTicketCode = null;
+
+  try {
+    if (html5QrScannerInstance && isScannerRunning) {
+      html5QrScannerInstance.resume();
+    }
+  } catch (resumeErr) {
+    console.warn('Camera resume error:', resumeErr);
+  }
+
+  const statusBadge = document.getElementById('scanner-status-badge');
+  if (statusBadge) {
+    statusBadge.innerHTML = `
+      <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+      <span>Kamera Aktif • Arahkan ke Barcode / QR Tiket</span>
+    `;
+  }
+
+  const input = document.getElementById('checkin-input');
+  if (input) input.value = '';
+
+  const resultContainer = document.getElementById('checkin-result');
+  if (resultContainer) {
+    resultContainer.classList.add('hidden');
+  }
+}
+
+// Optional countdown to auto-resume camera scanning
+function startResumeCountdown(seconds = 5) {
+  if (resumeTimerId) clearTimeout(resumeTimerId);
+  let remaining = seconds;
+  const updateTimerText = () => {
+    const countdownEl = document.getElementById('checkin-countdown-timer');
+    if (countdownEl) countdownEl.textContent = `(${remaining}d)`;
+  };
+  updateTimerText();
+
+  const interval = setInterval(() => {
+    remaining--;
+    updateTimerText();
+    if (remaining <= 0) {
+      clearInterval(interval);
+      resumeTimerId = null;
+      resumeCameraScanning();
+    }
+  }, 1000);
+
+  resumeTimerId = interval;
+}
+
 // Execute check-in logic (called by both camera scanner and manual form)
 async function executeCheckin(codeToValidate) {
   const code = (codeToValidate || '').trim().toUpperCase();
   if (!code) return;
+
+  if (resumeTimerId) {
+    clearTimeout(resumeTimerId);
+    resumeTimerId = null;
+  }
 
   const resultContainer = document.getElementById('checkin-result');
   resultContainer.className = 'mt-6 text-left p-5 rounded-2xl border bg-slate-50 border-slate-200';
@@ -919,20 +1027,24 @@ async function executeCheckin(codeToValidate) {
               </div>
             </div>
             
-            <div class="mt-3 flex items-center justify-between">
-              <span class="text-[11px] text-emerald-700 font-medium">Silakan persilakan tamu memasuki aula/venue acara.</span>
-              <button onclick="document.getElementById('checkin-result').classList.add('hidden')" class="text-xs font-semibold text-emerald-800 hover:text-emerald-950 underline">Tutup Hasil</button>
+            <div class="mt-4 flex flex-wrap items-center gap-2.5">
+              <button type="button" onclick="resumeCameraScanning()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-sm transition flex items-center gap-1.5">
+                <i data-lucide="camera" class="w-3.5 h-3.5"></i>
+                <span>Scan Tiket Berikutnya <span id="checkin-countdown-timer">(5d)</span></span>
+              </button>
+              <button type="button" onclick="uncheckinOrder('${order.id}', '${order.order_id}')" class="bg-white hover:bg-red-50 text-red-600 border border-red-200 font-semibold px-3 py-2 rounded-xl text-xs transition">
+                ↩️ Batalkan Check-in
+              </button>
             </div>
           </div>
         </div>
       `;
-      const input = document.getElementById('checkin-input');
-      if (input) input.value = '';
       loadStats();
+      startResumeCountdown(5);
     } else if (res.status === 409) {
       // 2. WARNING: ALREADY CHECKED IN
       playBeepSound('warning');
-      const order = result.data;
+      const order = result.data || {};
       resultContainer.className = 'mt-6 text-left p-6 rounded-2xl border-2 border-red-500 bg-red-50 text-red-950 shadow-md';
       resultContainer.innerHTML = `
         <div class="flex items-start gap-4">
@@ -940,29 +1052,53 @@ async function executeCheckin(codeToValidate) {
           <div class="flex-1">
             <span class="inline-block px-2.5 py-0.5 rounded-full bg-red-200 text-red-900 font-bold text-[11px] uppercase tracking-wider mb-1">PERINGATAN: TIKET SUDAH DIGUNAKAN!</span>
             <h3 class="text-lg font-black text-red-950">${escapeHtml(result.message)}</h3>
-            <p class="text-xs text-red-800 mt-1">Pemegang Tiket: <strong>${escapeHtml(order ? order.name : '-')}</strong> (${escapeHtml(order ? (order.performance_session || '-') : '-')})</p>
+            <p class="text-xs text-red-800 mt-1">Pemegang Tiket: <strong>${escapeHtml(order.name || '-')}</strong> (${escapeHtml(order.performance_session || order.institution || '-')})</p>
             <p class="text-[11px] text-red-700 mt-2 bg-red-100/70 p-2.5 rounded-xl border border-red-200 font-medium">
-              ⚠️ Dilarang masuk dua kali dengan tiket yang sama. Periksa fisik tiket atau identitas pembawa tiket.
+              ⚠️ Tamu ini sudah pernah tercatat masuk sebelumnya pada <strong>${order.checked_in_at ? new Date(order.checked_in_at).toLocaleTimeString('id-ID') + ' WIB' : 'hari ini'}</strong>. Jika tamu hanya keluar sebentar atau panitia sedang menguji coba, klik tombol reset di bawah.
             </p>
-            <div class="mt-2 text-right">
-              <button onclick="document.getElementById('checkin-result').classList.add('hidden')" class="text-xs font-semibold text-red-800 hover:text-red-950 underline">Tutup</button>
+            <div class="mt-4 flex flex-wrap items-center gap-2">
+              <button type="button" onclick="resumeCameraScanning()" class="bg-slate-800 hover:bg-slate-900 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-sm transition flex items-center gap-1.5">
+                <i data-lucide="camera" class="w-3.5 h-3.5"></i>
+                <span>Scan Tiket Lain</span>
+              </button>
+              ${order.id ? `
+                <button type="button" onclick="uncheckinOrder('${order.id}', '${order.order_id}')" class="bg-white hover:bg-amber-50 text-amber-800 border border-amber-300 font-semibold px-3 py-2 rounded-xl text-xs transition">
+                  ↩️ Reset / Izinkan Masuk Ulang
+                </button>
+              ` : ''}
             </div>
           </div>
         </div>
       `;
     } else {
-      // 3. REJECTED / NOT FOUND / UNPAID
+      // 3. REJECTED / UNPAID / NOT FOUND
       playBeepSound('error');
+      const order = result.data || null;
+      const isPending = order && order.status === 'pending';
       resultContainer.className = 'mt-6 text-left p-6 rounded-2xl border-2 border-amber-500 bg-amber-50 text-amber-950 shadow-md';
       resultContainer.innerHTML = `
         <div class="flex items-start gap-4">
           <div class="w-12 h-12 rounded-2xl bg-amber-500 text-white flex items-center justify-center flex-shrink-0 text-2xl font-bold shadow-sm">!</div>
           <div class="flex-1">
-            <span class="inline-block px-2.5 py-0.5 rounded-full bg-amber-200 text-amber-900 font-bold text-[11px] uppercase tracking-wider mb-1">AKSES DITOLAK / TIDAK VALID</span>
+            <span class="inline-block px-2.5 py-0.5 rounded-full bg-amber-200 text-amber-900 font-bold text-[11px] uppercase tracking-wider mb-1">AKSES DITOLAK • ${isPending ? 'BELUM LUNAS' : 'TIKET TIDAK VALID'}</span>
             <h3 class="text-base font-bold text-amber-950">${escapeHtml(result.message || 'Tiket tidak ditemukan')}</h3>
-            <p class="text-xs text-amber-800 mt-1">Pastikan tiket sudah berstatus LUNAS (terverifikasi oleh panitia) sebelum tamu dapat melakukan check-in.</p>
-            <div class="mt-2 text-right">
-              <button onclick="document.getElementById('checkin-result').classList.add('hidden')" class="text-xs font-semibold text-amber-800 hover:text-amber-950 underline">Tutup</button>
+            ${order ? `
+              <div class="mt-2 text-xs text-amber-800 bg-white/60 p-2.5 rounded-xl border border-amber-200">
+                <p>Nama: <strong>${escapeHtml(order.name)}</strong> • ${order.phone}</p>
+                <p>Sesi: <strong>${escapeHtml(order.performance_session || order.ticket_category || '-')}</strong> (${order.ticket_qty} Tiket)</p>
+                <p>Tagihan: <strong>Rp ${formatRupiah(order.total_amount)}</strong> (Status: <span class="uppercase font-bold text-amber-700">${order.status}</span>)</p>
+              </div>
+            ` : ''}
+            <div class="mt-4 flex flex-wrap items-center gap-2">
+              <button type="button" onclick="resumeCameraScanning()" class="bg-slate-800 hover:bg-slate-900 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-sm transition">
+                <span>Scan Tiket Lain</span>
+              </button>
+              ${isPending ? `
+                <button type="button" onclick="quickVerifyAndCheckin('${order.id}', '${order.order_id}')" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-sm transition flex items-center gap-1.5">
+                  <i data-lucide="check" class="w-3.5 h-3.5"></i>
+                  <span>Verifikasi Lunas & Izinkan Masuk</span>
+                </button>
+              ` : ''}
             </div>
           </div>
         </div>
@@ -971,7 +1107,44 @@ async function executeCheckin(codeToValidate) {
   } catch (err) {
     playBeepSound('error');
     resultContainer.className = 'mt-6 text-left p-5 rounded-2xl border border-red-200 bg-red-50 text-red-800 text-xs';
-    resultContainer.textContent = 'Terjadi kesalahan sistem: ' + err.message;
+    resultContainer.innerHTML = `
+      <p class="font-bold">Terjadi kesalahan sistem: ${escapeHtml(err.message)}</p>
+      <button type="button" onclick="resumeCameraScanning()" class="mt-3 bg-red-600 text-white font-bold px-3 py-1.5 rounded-lg text-xs">
+        Coba Scan Ulang
+      </button>
+    `;
+  } finally {
+    if (window.lucide) lucide.createIcons();
+  }
+}
+
+async function uncheckinOrder(id, orderId) {
+  try {
+    const res = await fetch(`/api/orders/${id}/uncheckin`, { method: 'POST' });
+    const result = await res.json();
+    if (!result.success) throw new Error(result.message);
+    showToast(`✓ Check-in ${orderId} berhasil dibatalkan!`, 'success');
+    loadStats();
+    resumeCameraScanning();
+  } catch (e) {
+    alert('Gagal membatalkan check-in: ' + e.message);
+  }
+}
+
+async function quickVerifyAndCheckin(id, orderId) {
+  if (!confirm(`Verifikasi pembayaran tiket ${orderId} sebagai LUNAS dan izinkan tamu langsung masuk?`)) return;
+  try {
+    const res = await fetch(`/api/orders/${id}/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ verified_by: 'Panitia Gate (Pintu Masuk)' })
+    });
+    const result = await res.json();
+    if (!result.success) throw new Error(result.message);
+    showToast(`✓ Tiket ${orderId} telah diverifikasi LUNAS!`, 'success');
+    await executeCheckin(orderId);
+  } catch (e) {
+    alert('Gagal memverifikasi tiket: ' + e.message);
   }
 }
 
@@ -1038,15 +1211,34 @@ async function loadSettings() {
     currentSettings = result.data;
     document.getElementById('top-event-name').textContent = currentSettings.event_name || 'Kegiatan Sekolah';
 
-    // Fill settings form
-    document.getElementById('setting-event-name').value = currentSettings.event_name || '';
-    document.getElementById('setting-school-name').value = currentSettings.school_name || '';
-    document.getElementById('setting-event-date').value = currentSettings.event_date || '';
-    document.getElementById('setting-event-time').value = currentSettings.event_time || '';
-    document.getElementById('setting-gateway-type').value = currentSettings.wa_gateway_type || 'fonnte';
-    document.getElementById('setting-wa-token').value = currentSettings.wa_api_token || '';
-    document.getElementById('setting-template-receipt').value = currentSettings.template_receipt || '';
-    document.getElementById('setting-template-verified').value = currentSettings.template_verified || '';
+    // Helper safely sets field values
+    const setVal = (id, val) => {
+      const el = document.getElementById(id);
+      if (el) el.value = val !== undefined && val !== null ? val : '';
+    };
+
+    setVal('setting-event-name', currentSettings.event_name || '');
+    setVal('setting-school-name', currentSettings.school_name || '');
+    setVal('setting-event-date', currentSettings.event_date || '');
+    setVal('setting-event-time', currentSettings.event_time || '');
+    setVal('setting-event-location', currentSettings.event_location || '');
+    setVal('setting-contact-person', currentSettings.contact_person || '');
+    setVal('setting-ticket-price', currentSettings.ticket_price || 75000);
+    setVal('setting-gateway-type', currentSettings.wa_gateway_type || 'fonnte');
+    setVal('setting-wa-token', currentSettings.wa_api_token || '');
+    setVal('setting-template-receipt', currentSettings.template_receipt || '');
+    setVal('setting-template-verified', currentSettings.template_verified || '');
+
+    // Spreadsheet URL
+    const sheetUrl = currentSettings.google_sheet_url || '';
+    setVal('setting-sheet-url', sheetUrl);
+    setVal('sheet-sync-url', sheetUrl);
+
+    // Auto sync toggle
+    const autoSyncEl = document.getElementById('setting-auto-sync');
+    if (autoSyncEl) {
+      autoSyncEl.checked = currentSettings.auto_sync_enabled !== false && currentSettings.auto_sync_enabled !== 'false';
+    }
 
     // Render bank accounts
     renderBankAccounts(currentSettings.bank_accounts || []);
@@ -1100,15 +1292,25 @@ async function handleSaveSettings(e) {
     if (bank && number) banks.push({ bank, number, holder });
   });
 
+  const getElVal = (id) => {
+    const el = document.getElementById(id);
+    return el ? el.value.trim() : '';
+  };
+
   const payload = {
-    event_name: document.getElementById('setting-event-name').value.trim(),
-    school_name: document.getElementById('setting-school-name').value.trim(),
-    event_date: document.getElementById('setting-event-date').value.trim(),
-    event_time: document.getElementById('setting-event-time').value.trim(),
-    wa_gateway_type: document.getElementById('setting-gateway-type').value,
-    wa_api_token: document.getElementById('setting-wa-token').value.trim(),
-    template_receipt: document.getElementById('setting-template-receipt').value,
-    template_verified: document.getElementById('setting-template-verified').value,
+    event_name: getElVal('setting-event-name'),
+    school_name: getElVal('setting-school-name'),
+    event_date: getElVal('setting-event-date'),
+    event_time: getElVal('setting-event-time'),
+    event_location: getElVal('setting-event-location'),
+    contact_person: getElVal('setting-contact-person'),
+    ticket_price: parseInt(getElVal('setting-ticket-price') || 75000, 10),
+    google_sheet_url: getElVal('setting-sheet-url'),
+    auto_sync_enabled: document.getElementById('setting-auto-sync') ? document.getElementById('setting-auto-sync').checked : true,
+    wa_gateway_type: getElVal('setting-gateway-type'),
+    wa_api_token: getElVal('setting-wa-token'),
+    template_receipt: getElVal('setting-template-receipt'),
+    template_verified: getElVal('setting-template-verified'),
     bank_accounts: banks
   };
 
@@ -1122,10 +1324,48 @@ async function handleSaveSettings(e) {
 
     if (!result.success) throw new Error(result.message);
 
-    showToast('Pengaturan berhasil disimpan!', 'success');
+    showToast('Pengaturan berhasil disimpan permanen!', 'success');
     await loadSettings();
   } catch (err) {
     alert('Gagal menyimpan pengaturan: ' + err.message);
+  }
+}
+
+async function handleQuickSheetSync() {
+  const urlInput = document.getElementById('setting-sheet-url');
+  const sheetUrl = (urlInput ? urlInput.value.trim() : '') || currentSettings.google_sheet_url;
+  if (!sheetUrl) {
+    alert('Masukkan link Google Spreadsheet terlebih dahulu.');
+    return;
+  }
+
+  const btn = document.getElementById('btn-quick-sync');
+  const icon = document.getElementById('quick-sync-icon');
+  if (btn) btn.disabled = true;
+  if (icon) icon.classList.add('animate-spin');
+
+  try {
+    const res = await fetch('/api/sync/google-sheet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sheet_url: sheetUrl, send_wa: false })
+    });
+    const result = await res.json();
+    if (!result.success) throw new Error(result.error || result.message);
+
+    showToast(`✓ Sinkronisasi Sukses! ${result.data.newOrders} data baru ditarik.`, 'success');
+    await Promise.all([loadStats(), loadOrders()]);
+    if (typeof loadSessionRecap === 'function') loadSessionRecap();
+    
+    const badge = document.getElementById('sync-last-status');
+    if (badge) {
+      badge.textContent = `Tersinkron (${result.data.totalRecords} baris)`;
+    }
+  } catch (err) {
+    alert('Gagal menyinkronkan Google Sheet: ' + err.message);
+  } finally {
+    if (btn) btn.disabled = false;
+    if (icon) icon.classList.remove('animate-spin');
   }
 }
 

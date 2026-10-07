@@ -588,7 +588,8 @@ app.post('/api/orders/:id/checkin', (req, res) => {
     if (order.status !== 'verified') {
       return res.status(400).json({
         success: false,
-        message: `Tiket belum lunas (Status: ${order.status.toUpperCase()}). Pembayaran harus diverifikasi terlebih dahulu!`
+        message: `Tiket belum lunas (Status: ${order.status.toUpperCase()}). Pembayaran harus diverifikasi terlebih dahulu!`,
+        data: order
       });
     }
 
@@ -611,6 +612,33 @@ app.post('/api/orders/:id/checkin', (req, res) => {
     res.json({
       success: true,
       message: 'Check-in BERHASIL! Selamat datang di acara.',
+      data: updated
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 8b. Gate Uncheck-in / Reset Check-in Ticket (Panitia override)
+app.post('/api/orders/:id/uncheckin', (req, res) => {
+  try {
+    const { id } = req.params;
+    const order = db.prepare('SELECT * FROM orders WHERE id = ? OR order_id = ?').get(id, id);
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Kode tiket tidak ditemukan!' });
+    }
+
+    db.prepare(`
+      UPDATE orders
+      SET checked_in = 0, checked_in_at = NULL
+      WHERE id = ?
+    `).run(order.id);
+
+    const updated = db.prepare('SELECT * FROM orders WHERE id = ?').get(order.id);
+    res.json({
+      success: true,
+      message: 'Status check-in berhasil dibatalkan. Tiket dapat digunakan kembali.',
       data: updated
     });
   } catch (err) {
@@ -826,7 +854,7 @@ app.get('/api/orders/export-csv', (req, res) => {
 setInterval(async () => {
   try {
     const settings = getSettings();
-    if (settings.google_sheet_url) {
+    if (settings.google_sheet_url && settings.auto_sync_enabled !== false && settings.auto_sync_enabled !== 'false') {
       await syncFromGoogleSheet(settings.google_sheet_url, { sendWaOnSync: false });
     }
   } catch (err) {
@@ -835,10 +863,22 @@ setInterval(async () => {
 }, 30000);
 
 // Start Server
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`====================================================`);
   console.log(`🎟️  SISTEM TIKET KEGIATAN SEKOLAH AKTIF!`);
   console.log(`🌐  Dashboard Web : http://localhost:${PORT}`);
   console.log(`📡  Webhook URL  : http://localhost:${PORT}/api/webhook/order`);
   console.log(`====================================================`);
+
+  // Initial Sync from Google Spreadsheet on startup
+  try {
+    const settings = getSettings();
+    if (settings.google_sheet_url) {
+      console.log(`🔄 Menjalankan sinkronisasi awal Google Spreadsheet...`);
+      const syncResult = await syncFromGoogleSheet(settings.google_sheet_url, { sendWaOnSync: false });
+      console.log(`✓ Sinkronisasi awal selesai: ${syncResult.newOrders} data baru, ${syncResult.updatedOrders} data diperbarui.`);
+    }
+  } catch (err) {
+    console.warn(`⚠️ Catatan sinkronisasi awal Google Sheet: ${err.message}`);
+  }
 });

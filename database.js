@@ -101,7 +101,10 @@ function initDatabase() {
     {
       key: 'template_rejected',
       value: `⚠️ *PEMBERITAHUAN VERIFIKASI TIKET* ⚠️\n*{{event_name}}*\n----------------------------------------\nHalo Kak *{{name}}*,\nMohon maaf, bukti pembayaran untuk pesanan *{{order_id}}* belum dapat kami verifikasi karena:\n\n👉 *Alasan:* {{reason}}\n\nSilakan kirim ulang bukti transfer yang jelas dan valid dengan membalas pesan WhatsApp ini atau menghubungi panitia: {{contact_person}}.\n\nTerima kasih!`
-    }
+    },
+    { key: 'google_sheet_url', value: '' },
+    { key: 'auto_sync_enabled', value: 'true' },
+    { key: 'ticket_price', value: '75000' }
   ];
 
   const insertSetting = db.prepare(`
