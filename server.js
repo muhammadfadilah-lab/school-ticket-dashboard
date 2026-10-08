@@ -14,7 +14,7 @@ const {
   getDirectWhatsAppLink,
   sendWhatsAppMessage
 } = require('./whatsappService');
-const { syncFromGoogleSheet } = require('./googleSheetSync');
+const { syncFromGoogleSheet, loadOrdersCache, saveOrdersCache } = require('./googleSheetSync');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -450,6 +450,21 @@ app.post('/api/orders/:id/verify', async (req, res) => {
 
     const directWaLink = getDirectWhatsAppLink(updatedOrder.phone, ticketMessage);
 
+    // Persist verified status to orders cache
+    try {
+      const cache = loadOrdersCache();
+      const k = `${updatedOrder.phone}_${updatedOrder.name.trim()}`;
+      cache[k] = {
+        order_id: updatedOrder.order_id,
+        name: updatedOrder.name,
+        phone: updatedOrder.phone,
+        status: 'verified',
+        checked_in: updatedOrder.checked_in || 0,
+        checked_in_at: updatedOrder.checked_in_at
+      };
+      saveOrdersCache(cache);
+    } catch (e) {}
+
     res.json({
       success: true,
       message: 'Pembayaran berhasil diverifikasi menjadi LUNAS',
@@ -609,6 +624,22 @@ app.post('/api/orders/:id/checkin', (req, res) => {
     `).run(order.id);
 
     const updated = db.prepare('SELECT * FROM orders WHERE id = ?').get(order.id);
+
+    // Persist check-in status to orders cache
+    try {
+      const cache = loadOrdersCache();
+      const k = `${updated.phone}_${updated.name.trim()}`;
+      cache[k] = {
+        order_id: updated.order_id,
+        name: updated.name,
+        phone: updated.phone,
+        status: updated.status,
+        checked_in: 1,
+        checked_in_at: updated.checked_in_at
+      };
+      saveOrdersCache(cache);
+    } catch (e) {}
+
     res.json({
       success: true,
       message: 'Check-in BERHASIL! Selamat datang di acara.',
@@ -636,6 +667,18 @@ app.post('/api/orders/:id/uncheckin', (req, res) => {
     `).run(order.id);
 
     const updated = db.prepare('SELECT * FROM orders WHERE id = ?').get(order.id);
+
+    // Persist uncheck-in status to orders cache
+    try {
+      const cache = loadOrdersCache();
+      const k = `${updated.phone}_${updated.name.trim()}`;
+      if (cache[k]) {
+        cache[k].checked_in = 0;
+        cache[k].checked_in_at = null;
+        saveOrdersCache(cache);
+      }
+    } catch (e) {}
+
     res.json({
       success: true,
       message: 'Status check-in berhasil dibatalkan. Tiket dapat digunakan kembali.',
@@ -768,6 +811,87 @@ app.post('/api/settings', (req, res) => {
     }
     const current = getSettings();
     res.json({ success: true, message: 'Pengaturan berhasil disimpan', data: current });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 11b. Browser Client State Auto-Sync & Recovery
+app.post('/api/settings/backup-sync', async (req, res) => {
+  try {
+    const { settings: clientSettings, overrides } = req.body;
+    let shouldSync = false;
+
+    if (clientSettings && typeof clientSettings === 'object') {
+      const current = getSettings();
+      // If current google_sheet_url is empty, or client provided a valid sheet url
+      if (clientSettings.google_sheet_url && (!current.google_sheet_url || current.google_sheet_url !== clientSettings.google_sheet_url)) {
+        updateSetting('google_sheet_url', clientSettings.google_sheet_url);
+        shouldSync = true;
+      }
+      for (const [k, v] of Object.entries(clientSettings)) {
+        if (v !== undefined && v !== null && v !== '') {
+          updateSetting(k, v);
+        }
+      }
+    }
+
+    // Apply any client-side order overrides (e.g. verified or checked-in)
+    if (overrides && typeof overrides === 'object') {
+      const cache = loadOrdersCache();
+      for (const [orderId, state] of Object.entries(overrides)) {
+        if (state.status === 'verified') {
+          db.prepare("UPDATE orders SET status = 'verified' WHERE order_id = ?").run(orderId);
+        }
+        if (state.checked_in === 1) {
+          db.prepare("UPDATE orders SET checked_in = 1, checked_in_at = COALESCE(checked_in_at, CURRENT_TIMESTAMP) WHERE order_id = ?").run(orderId);
+        }
+      }
+    }
+
+    const current = getSettings();
+    if (shouldSync && current.google_sheet_url) {
+      syncFromGoogleSheet(current.google_sheet_url, { sendWaOnSync: false }).catch(() => {});
+    }
+
+    res.json({ success: true, message: 'Pengaturan dan status cadangan berhasil disinkronkan', data: current });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 11c. Export Settings & Data State (JSON File Download)
+app.get('/api/settings/export', (req, res) => {
+  try {
+    const settings = getSettings();
+    const ordersCache = loadOrdersCache();
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', 'attachment; filename="backup-sistem-tiket.json"');
+    res.send(JSON.stringify({ settings, orders_cache: ordersCache, exported_at: new Date().toISOString() }, null, 2));
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 11d. Import Settings & Data State (JSON File Upload / Restore)
+app.post('/api/settings/import', (req, res) => {
+  try {
+    const { settings: importedSettings, orders_cache: importedCache } = req.body;
+    if (importedSettings && typeof importedSettings === 'object') {
+      for (const [k, v] of Object.entries(importedSettings)) {
+        updateSetting(k, v);
+      }
+    }
+    if (importedCache && typeof importedCache === 'object') {
+      const existing = loadOrdersCache();
+      Object.assign(existing, importedCache);
+      saveOrdersCache(existing);
+    }
+    const current = getSettings();
+    if (current.google_sheet_url) {
+      syncFromGoogleSheet(current.google_sheet_url, { sendWaOnSync: false }).catch(() => {});
+    }
+    res.json({ success: true, message: 'Cadangan berhasil diimpor & dipulihkan!', data: current });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

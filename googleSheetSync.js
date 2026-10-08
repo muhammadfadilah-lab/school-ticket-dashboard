@@ -1,6 +1,52 @@
 const { parse } = require('csv-parse/sync');
+const path = require('path');
+const fs = require('fs');
 const { db, getSettings, updateSetting } = require('./database');
 const { formatIndonesianPhone, buildReceiptMessage, sendWhatsAppMessage } = require('./whatsappService');
+
+/**
+ * Load persistent orders cache from disk
+ */
+function loadOrdersCache() {
+  const cachePath = path.join(__dirname, 'config', 'orders_cache.json');
+  if (fs.existsSync(cachePath)) {
+    try {
+      return JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+    } catch (e) {
+      console.warn('Warning reading config/orders_cache.json:', e.message);
+    }
+  }
+  return {};
+}
+
+/**
+ * Save persistent orders cache to disk
+ */
+function saveOrdersCache(cache) {
+  try {
+    const cfgDir = path.join(__dirname, 'config');
+    if (!fs.existsSync(cfgDir)) {
+      fs.mkdirSync(cfgDir, { recursive: true });
+    }
+    fs.writeFileSync(path.join(cfgDir, 'orders_cache.json'), JSON.stringify(cache, null, 2), 'utf8');
+  } catch (e) {
+    console.warn('Warning saving config/orders_cache.json:', e.message);
+  }
+}
+
+/**
+ * Generate stable, deterministic order ID from phone and name
+ */
+function generateDeterministicOrderId(phone, name) {
+  const seed = `${phone || ''}_${(name || '').trim().toLowerCase()}`;
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = ((hash << 5) - hash) + seed.charCodeAt(i);
+    hash |= 0;
+  }
+  const codeNum = Math.abs(hash) % 9000 + 1000;
+  return `TIX-${codeNum}`;
+}
 
 /**
  * Extract Google Spreadsheet ID from URL
@@ -72,6 +118,7 @@ async function syncFromGoogleSheet(sheetUrlOrId, options = {}) {
   }
 
   const settings = getSettings();
+  const ordersCache = loadOrdersCache();
   let newCount = 0;
   let updatedCount = 0;
 
@@ -80,8 +127,8 @@ async function syncFromGoogleSheet(sheetUrlOrId, options = {}) {
       order_id, name, phone, email, institution, ticket_category,
       performance_session, sender_account_name, has_transferred,
       ticket_qty, ticket_price, total_amount, payment_method,
-      payment_proof_url, notes, status, created_at, raw_source
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'google_sheet_sync')
+      payment_proof_url, notes, status, checked_in, checked_in_at, created_at, raw_source
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'google_sheet_sync')
   `);
 
   const updateProof = db.prepare(`
@@ -114,6 +161,8 @@ async function syncFromGoogleSheet(sheetUrlOrId, options = {}) {
     const payment_proof_url = data['Please attach your payment receipt here :'] || data['Please attach your payment receipt here'] || data['Bukti Transfer'] || '';
     const timestampStr = data['Timestamp'] || data['Waktu'] || new Date().toISOString();
 
+    const cacheKey = `${phone}_${name.trim()}`;
+
     // Cek apakah di sheet sudah ada kolom Kode Tiket
     let order_id = data['KODE TIKET (ORDER ID)'] || data['Kode Tiket'] || data['Order ID'] || '';
     let sheetStatus = (data['STATUS VERIFIKASI'] || data['Status'] || '').toLowerCase();
@@ -127,20 +176,45 @@ async function syncFromGoogleSheet(sheetUrlOrId, options = {}) {
     // Cek apakah order sudah ada di database (berdasarkan order_id atau nama + phone)
     let existing = null;
     if (order_id) {
-      existing = db.prepare('SELECT id, status, payment_proof_url FROM orders WHERE order_id = ?').get(order_id);
+      existing = db.prepare('SELECT id, order_id, status, checked_in, checked_in_at, payment_proof_url FROM orders WHERE order_id = ?').get(order_id);
     }
     if (!existing) {
-      existing = db.prepare('SELECT id, status, payment_proof_url FROM orders WHERE phone = ? AND name = ?').get(phone, name);
+      existing = db.prepare('SELECT id, order_id, status, checked_in, checked_in_at, payment_proof_url FROM orders WHERE phone = ? AND name = ?').get(phone, name);
     }
 
     if (existing) {
       // Update data jika ada bukti pembayaran baru
       updateProof.run(payment_proof_url, sender_account_name, have_transferred, existing.id);
       updatedCount++;
+
+      // Update cache
+      ordersCache[cacheKey] = {
+        order_id: existing.order_id,
+        name,
+        phone,
+        status: existing.status,
+        checked_in: existing.checked_in,
+        checked_in_at: existing.checked_in_at
+      };
     } else {
-      // Insert baru
+      // Tentukan Order ID yang stabil & permanen
       if (!order_id) {
-        order_id = 'TIX-' + Math.floor(1000 + Math.random() * 9000);
+        if (ordersCache[cacheKey] && ordersCache[cacheKey].order_id) {
+          order_id = ordersCache[cacheKey].order_id;
+        } else {
+          order_id = generateDeterministicOrderId(phone, name);
+        }
+      }
+
+      // Pulihkan status verified & check-in dari cache jika database baru di-reset
+      let checked_in = 0;
+      let checked_in_at = null;
+      if (ordersCache[cacheKey]) {
+        if (ordersCache[cacheKey].status === 'verified') status = 'verified';
+        if (ordersCache[cacheKey].checked_in === 1) {
+          checked_in = 1;
+          checked_in_at = ordersCache[cacheKey].checked_in_at;
+        }
       }
 
       let ticket_price = 75000;
@@ -155,10 +229,20 @@ async function syncFromGoogleSheet(sheetUrlOrId, options = {}) {
         order_id, name, phone, email, performance_session, ticket_category,
         performance_session, sender_account_name, have_transferred,
         ticket_qty, ticket_price, total_amount, payment_method,
-        payment_proof_url, notes, status, timestampStr
+        payment_proof_url, notes, status, checked_in, checked_in_at, timestampStr
       );
 
       newCount++;
+
+      // Update cache
+      ordersCache[cacheKey] = {
+        order_id,
+        name,
+        phone,
+        status,
+        checked_in,
+        checked_in_at
+      };
 
       // Kirim WhatsApp Receipt jika diaktifkan
       if (options.sendWaOnSync && settings.wa_api_token) {
@@ -173,6 +257,9 @@ async function syncFromGoogleSheet(sheetUrlOrId, options = {}) {
     }
   }
 
+  // Persist updated orders cache to disk
+  saveOrdersCache(ordersCache);
+
   return {
     success: true,
     totalRecords: records.length,
@@ -183,5 +270,7 @@ async function syncFromGoogleSheet(sheetUrlOrId, options = {}) {
 
 module.exports = {
   extractSpreadsheetId,
-  syncFromGoogleSheet
+  syncFromGoogleSheet,
+  loadOrdersCache,
+  saveOrdersCache
 };

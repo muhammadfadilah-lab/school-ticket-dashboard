@@ -222,6 +222,22 @@ async function loadOrders() {
     allOrders = result.data;
     document.getElementById('orders-count-text').textContent = allOrders.length;
     renderOrdersTable(allOrders);
+
+    // Persist verified & checked-in statuses to browser storage for Render survival
+    try {
+      const existingOverrides = JSON.parse(localStorage.getItem('school_ticket_orders_state') || '{}');
+      allOrders.forEach(o => {
+        if (o.status === 'verified' || o.checked_in === 1) {
+          existingOverrides[o.order_id] = {
+            status: o.status,
+            checked_in: o.checked_in || 0,
+            phone: o.phone,
+            name: o.name
+          };
+        }
+      });
+      localStorage.setItem('school_ticket_orders_state', JSON.stringify(existingOverrides));
+    } catch (e) {}
   } catch (err) {
     tbody.innerHTML = `<tr><td colspan="8" class="text-center py-6 text-red-500 text-xs">Gagal memuat data: ${err.message}</td></tr>`;
   }
@@ -429,6 +445,17 @@ async function verifyOrder(id, name) {
     if (!result.success) throw new Error(result.message);
 
     showToast(`✓ Pesanan ${name} LUNAS! E-Tiket berhasil diproses`, 'success');
+
+    // Update local cache
+    try {
+      const existingOverrides = JSON.parse(localStorage.getItem('school_ticket_orders_state') || '{}');
+      const order = allOrders.find(o => o.id == id);
+      const oId = (order && order.order_id) || (result.data && result.data.order && result.data.order.order_id);
+      if (oId) {
+        existingOverrides[oId] = { status: 'verified', checked_in: 0, name: name };
+        localStorage.setItem('school_ticket_orders_state', JSON.stringify(existingOverrides));
+      }
+    } catch (e) {}
     
     // If WhatsApp gateway is not configured, provide direct link
     if (result.data.direct_wa_link && (!result.data.wa_result || !result.data.wa_result.success)) {
@@ -459,6 +486,16 @@ async function deleteOrder(id, orderId, name) {
     if (!result.success) throw new Error(result.message || 'Gagal menghapus transaksi');
 
     showToast(`Transaksi ${orderId} berhasil dihapus`, 'info');
+
+    // Remove from local cache
+    try {
+      const existingOverrides = JSON.parse(localStorage.getItem('school_ticket_orders_state') || '{}');
+      if (existingOverrides[orderId]) {
+        delete existingOverrides[orderId];
+        localStorage.setItem('school_ticket_orders_state', JSON.stringify(existingOverrides));
+      }
+    } catch (e) {}
+
     loadStats();
     loadOrders();
   } catch (err) {
@@ -1039,6 +1076,19 @@ async function executeCheckin(codeToValidate) {
           </div>
         </div>
       `;
+
+      // Cache checked-in state locally
+      try {
+        const existingOverrides = JSON.parse(localStorage.getItem('school_ticket_orders_state') || '{}');
+        existingOverrides[order.order_id] = {
+          status: 'verified',
+          checked_in: 1,
+          name: order.name,
+          phone: order.phone
+        };
+        localStorage.setItem('school_ticket_orders_state', JSON.stringify(existingOverrides));
+      } catch (e) {}
+
       loadStats();
       startResumeCountdown(5);
     } else if (res.status === 409) {
@@ -1124,6 +1174,16 @@ async function uncheckinOrder(id, orderId) {
     const result = await res.json();
     if (!result.success) throw new Error(result.message);
     showToast(`✓ Check-in ${orderId} berhasil dibatalkan!`, 'success');
+
+    // Update local cache
+    try {
+      const existingOverrides = JSON.parse(localStorage.getItem('school_ticket_orders_state') || '{}');
+      if (existingOverrides[orderId]) {
+        existingOverrides[orderId].checked_in = 0;
+        localStorage.setItem('school_ticket_orders_state', JSON.stringify(existingOverrides));
+      }
+    } catch (e) {}
+
     loadStats();
     resumeCameraScanning();
   } catch (e) {
@@ -1142,6 +1202,13 @@ async function quickVerifyAndCheckin(id, orderId) {
     const result = await res.json();
     if (!result.success) throw new Error(result.message);
     showToast(`✓ Tiket ${orderId} telah diverifikasi LUNAS!`, 'success');
+
+    try {
+      const existingOverrides = JSON.parse(localStorage.getItem('school_ticket_orders_state') || '{}');
+      existingOverrides[orderId] = { status: 'verified', checked_in: 1 };
+      localStorage.setItem('school_ticket_orders_state', JSON.stringify(existingOverrides));
+    } catch (e) {}
+
     await executeCheckin(orderId);
   } catch (e) {
     alert('Gagal memverifikasi tiket: ' + e.message);
@@ -1208,7 +1275,42 @@ async function loadSettings() {
     const result = await res.json();
     if (!result.success) return;
 
-    currentSettings = result.data;
+    currentSettings = result.data || {};
+
+    // Check if client has local backup in localStorage
+    const savedLocalStr = localStorage.getItem('school_ticket_persistent_settings');
+    let savedLocal = null;
+    try {
+      if (savedLocalStr) savedLocal = JSON.parse(savedLocalStr);
+    } catch (e) {}
+
+    // Check if server lacks google_sheet_url, but localStorage has it
+    if ((!currentSettings.google_sheet_url || currentSettings.google_sheet_url === '') && savedLocal && savedLocal.google_sheet_url) {
+      console.log('Server settings were reset. Auto-recovering from browser local backup...');
+      try {
+        let savedOverrides = {};
+        try {
+          savedOverrides = JSON.parse(localStorage.getItem('school_ticket_orders_state') || '{}');
+        } catch (e) {}
+
+        const syncRes = await fetch('/api/settings/backup-sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ settings: savedLocal, overrides: savedOverrides })
+        });
+        const syncData = await syncRes.json();
+        if (syncData.success && syncData.data) {
+          currentSettings = syncData.data;
+          showToast('Pengaturan & data berhasil dipulihkan otomatis dari memori peramban!', 'info');
+        }
+      } catch (err) {
+        console.warn('Auto-healing sync error:', err);
+      }
+    } else if (currentSettings.google_sheet_url) {
+      // Save valid settings into localStorage for future auto-healing
+      localStorage.setItem('school_ticket_persistent_settings', JSON.stringify(currentSettings));
+    }
+
     document.getElementById('top-event-name').textContent = currentSettings.event_name || 'Kegiatan Sekolah';
 
     // Helper safely sets field values
@@ -1324,11 +1426,60 @@ async function handleSaveSettings(e) {
 
     if (!result.success) throw new Error(result.message);
 
+    // Save to localStorage as well for browser auto-healing
+    localStorage.setItem('school_ticket_persistent_settings', JSON.stringify(payload));
+
     showToast('Pengaturan berhasil disimpan permanen!', 'success');
     await loadSettings();
   } catch (err) {
     alert('Gagal menyimpan pengaturan: ' + err.message);
   }
+}
+
+// ==========================================
+// BACKUP & RESTORE PERSISTENCE TOOLS
+// ==========================================
+function exportSettingsBackup() {
+  window.location.href = '/api/settings/export';
+}
+
+async function handleImportBackup(event) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!data || (!data.settings && !data.orders_cache)) {
+        throw new Error('Format file cadangan tidak valid (harus file JSON backup sistem tiket).');
+      }
+
+      showToast('Memulihkan data cadangan...', 'info');
+
+      const res = await fetch('/api/settings/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      const result = await res.json();
+
+      if (!result.success) throw new Error(result.message || result.error);
+
+      if (result.data) {
+        localStorage.setItem('school_ticket_persistent_settings', JSON.stringify(result.data));
+      }
+
+      showToast('✓ Data dan pengaturan berhasil dipulihkan secara penuh!', 'success');
+      await Promise.all([loadSettings(), loadStats(), loadOrders()]);
+      if (typeof loadSessionRecap === 'function') loadSessionRecap();
+    } catch (err) {
+      alert('Gagal memulihkan file cadangan: ' + err.message);
+    } finally {
+      event.target.value = '';
+    }
+  };
+  reader.readAsText(file);
 }
 
 async function handleQuickSheetSync() {
