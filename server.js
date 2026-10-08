@@ -830,7 +830,7 @@ app.post('/api/settings/backup-sync', async (req, res) => {
         shouldSync = true;
       }
       for (const [k, v] of Object.entries(clientSettings)) {
-        if (v !== undefined && v !== null && v !== '') {
+        if (v !== undefined && v !== null && v !== '' && !k.startsWith('_')) {
           updateSetting(k, v);
         }
       }
@@ -846,7 +846,20 @@ app.post('/api/settings/backup-sync', async (req, res) => {
         if (state.checked_in === 1) {
           db.prepare("UPDATE orders SET checked_in = 1, checked_in_at = COALESCE(checked_in_at, CURRENT_TIMESTAMP) WHERE order_id = ?").run(orderId);
         }
+        const order = db.prepare('SELECT * FROM orders WHERE order_id = ?').get(orderId);
+        if (order) {
+          const k = `${order.phone}_${order.name.trim()}`;
+          cache[k] = {
+            order_id: order.order_id,
+            name: order.name,
+            phone: order.phone,
+            status: state.status || order.status,
+            checked_in: state.checked_in !== undefined ? state.checked_in : order.checked_in,
+            checked_in_at: order.checked_in_at
+          };
+        }
       }
+      saveOrdersCache(cache);
     }
 
     const current = getSettings();

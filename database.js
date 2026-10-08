@@ -170,7 +170,7 @@ function initDatabase() {
     }
   ];
 
-  // Insert or update settings
+  // Insert settings if missing or empty
   const insertSetting = db.prepare(`
     INSERT INTO settings (key, value) VALUES (@key, @value)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
@@ -180,10 +180,30 @@ function initDatabase() {
   const runMany = db.transaction((items) => {
     for (const item of items) insertSetting.run(item);
   });
-
   runMany(defaultSettings);
 
-  // If google_sheet_url in DB is empty, forcefully seed it
+  // If environment variables are explicitly defined in Render, they ALWAYS take absolute priority!
+  const envKeys = [
+    { key: 'google_sheet_url', env: process.env.GOOGLE_SHEET_URL },
+    { key: 'event_name', env: process.env.EVENT_NAME },
+    { key: 'school_name', env: process.env.SCHOOL_NAME },
+    { key: 'event_date', env: process.env.EVENT_DATE },
+    { key: 'event_time', env: process.env.EVENT_TIME },
+    { key: 'event_location', env: process.env.EVENT_LOCATION },
+    { key: 'contact_person', env: process.env.CONTACT_PERSON },
+    { key: 'ticket_price', env: process.env.TICKET_PRICE },
+    { key: 'wa_gateway_type', env: process.env.WA_GATEWAY_TYPE },
+    { key: 'wa_api_token', env: process.env.WA_API_TOKEN },
+    { key: 'bank_accounts', env: process.env.BANK_ACCOUNTS }
+  ];
+
+  for (const item of envKeys) {
+    if (item.env && String(item.env).trim() !== '') {
+      db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(item.key, String(item.env).trim());
+    }
+  }
+
+  // Force seed google_sheet_url if somehow empty
   const currentSheet = db.prepare("SELECT value FROM settings WHERE key = 'google_sheet_url'").get();
   if (!currentSheet || !currentSheet.value || currentSheet.value === '') {
     const fallbackSheet = process.env.GOOGLE_SHEET_URL || fileCfg.google_sheet_url || 'https://docs.google.com/spreadsheets/d/1yfkuGbePDKFCV3Zxsx6aaJiMzYEGzyPaG7cqC-xUIWQ/edit?usp=sharing';

@@ -1284,30 +1284,46 @@ async function loadSettings() {
       if (savedLocalStr) savedLocal = JSON.parse(savedLocalStr);
     } catch (e) {}
 
-    // Check if server lacks google_sheet_url, but localStorage has it
-    if ((!currentSettings.google_sheet_url || currentSettings.google_sheet_url === '') && savedLocal && savedLocal.google_sheet_url) {
-      console.log('Server settings were reset. Auto-recovering from browser local backup...');
-      try {
-        let savedOverrides = {};
-        try {
-          savedOverrides = JSON.parse(localStorage.getItem('school_ticket_orders_state') || '{}');
-        } catch (e) {}
+    let savedOverrides = {};
+    try {
+      savedOverrides = JSON.parse(localStorage.getItem('school_ticket_orders_state') || '{}');
+    } catch (e) {}
 
+    const hasOverrides = Object.keys(savedOverrides).length > 0;
+    const isCustomizedLocal = savedLocal && (savedLocal._customized === true || savedLocal._updatedAt);
+
+    // Check if browser has customized settings or order overrides that need auto-healing
+    let shouldRecover = false;
+    if (hasOverrides) shouldRecover = true;
+    if (isCustomizedLocal) {
+      if (savedLocal.event_name && savedLocal.event_name !== currentSettings.event_name) shouldRecover = true;
+      if (savedLocal.school_name && savedLocal.school_name !== currentSettings.school_name) shouldRecover = true;
+      if (savedLocal.contact_person && savedLocal.contact_person !== currentSettings.contact_person) shouldRecover = true;
+      if (savedLocal.wa_api_token && savedLocal.wa_api_token !== currentSettings.wa_api_token) shouldRecover = true;
+      if (savedLocal.google_sheet_url && savedLocal.google_sheet_url !== currentSettings.google_sheet_url) shouldRecover = true;
+    }
+
+    if (shouldRecover) {
+      console.log('Restoring user session data from browser storage...');
+      try {
         const syncRes = await fetch('/api/settings/backup-sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ settings: savedLocal, overrides: savedOverrides })
+          body: JSON.stringify({
+            settings: isCustomizedLocal ? savedLocal : undefined,
+            overrides: hasOverrides ? savedOverrides : undefined
+          })
         });
         const syncData = await syncRes.json();
         if (syncData.success && syncData.data) {
           currentSettings = syncData.data;
-          showToast('Pengaturan & data berhasil dipulihkan otomatis dari memori peramban!', 'info');
+          showToast('Data & pengaturan sesi Anda berhasil dipulihkan otomatis!', 'info');
         }
       } catch (err) {
-        console.warn('Auto-healing sync error:', err);
+        console.warn('Auto-recovery error:', err);
       }
-    } else if (currentSettings.google_sheet_url) {
-      // Save valid settings into localStorage for future auto-healing
+    } else if (!savedLocal && currentSettings.google_sheet_url) {
+      // Only seed localStorage if completely empty
       localStorage.setItem('school_ticket_persistent_settings', JSON.stringify(currentSettings));
     }
 
@@ -1427,6 +1443,8 @@ async function handleSaveSettings(e) {
     if (!result.success) throw new Error(result.message);
 
     // Save to localStorage as well for browser auto-healing
+    payload._customized = true;
+    payload._updatedAt = Date.now();
     localStorage.setItem('school_ticket_persistent_settings', JSON.stringify(payload));
 
     showToast('Pengaturan berhasil disimpan permanen!', 'success');
