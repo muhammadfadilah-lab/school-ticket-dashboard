@@ -98,11 +98,11 @@ function initDatabase() {
   const defaultSettings = [
     {
       key: 'event_name',
-      value: process.env.EVENT_NAME || fileCfg.event_name || 'PENTAS SENI & KREATIVITAS SISWA 2026'
+      value: process.env.EVENT_NAME || fileCfg.event_name || 'Drama Musikal & Pentas Budaya 2026 - SMP Regina Pacis Jakarta'
     },
     {
       key: 'school_name',
-      value: process.env.SCHOOL_NAME || fileCfg.school_name || 'SMA / SMK Negeri 1 Jakarta'
+      value: process.env.SCHOOL_NAME || fileCfg.school_name || 'SMP Regina Pacis Jakarta'
     },
     {
       key: 'event_date',
@@ -114,18 +114,16 @@ function initDatabase() {
     },
     {
       key: 'event_location',
-      value: process.env.EVENT_LOCATION || fileCfg.event_location || 'Aula Utama & Lapangan Sekolah'
+      value: process.env.EVENT_LOCATION || fileCfg.event_location || 'Auditorium Regina Pacis Jakarta'
     },
     {
       key: 'contact_person',
-      value: process.env.CONTACT_PERSON || fileCfg.contact_person || '081234567890 (Kak Panitia)'
+      value: process.env.CONTACT_PERSON || fileCfg.contact_person || 'Panitia Tiket SMP Regina Pacis'
     },
     {
       key: 'bank_accounts',
       value: process.env.BANK_ACCOUNTS || (fileCfg.bank_accounts ? JSON.stringify(fileCfg.bank_accounts) : JSON.stringify([
-        { bank: 'BCA', number: '1234567890', holder: 'BENDAHARA OSIS' },
-        { bank: 'Mandiri', number: '9876543210', holder: 'PANITIA KEGIATAN' },
-        { bank: 'DANA / QRIS', number: '081234567890', holder: 'KAS KEGIATAN' }
+        { bank: 'BCA', number: '0678025685', holder: 'Muhammad Fadilah' }
       ]))
     },
     {

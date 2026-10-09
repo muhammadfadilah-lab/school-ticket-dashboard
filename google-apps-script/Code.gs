@@ -28,15 +28,13 @@ const WA_GATEWAY = "fonnte";
 const WA_API_TOKEN = "PASTE_TOKEN_FONNTE_ANDA_DI_SINI";
 
 // Informasi Acara & Rekening Bank Panitia Sekolah
-const EVENT_NAME = "PERFORMANCE / KEGIATAN SEKOLAH 2026";
-const SCHOOL_NAME = "PANITIA KEGIATAN SEKOLAH";
-const CONTACT_PERSON = "081234567890 (Panitia Tiket)";
+const EVENT_NAME = "Drama Musikal & Pentas Budaya 2026 - SMP Regina Pacis Jakarta";
+const SCHOOL_NAME = "SMP Regina Pacis Jakarta";
+const CONTACT_PERSON = "Panitia Tiket SMP Regina Pacis";
 
 // Informasi Rekening Transfer Bank Sekolah
 const BANK_INFO = 
-  "• Bank BCA     : 1234567890 (a.n. Bendahara Sekolah)\n" +
-  "• Bank Mandiri : 9876543210 (a.n. Panitia Kegiatan)\n" +
-  "• DANA / QRIS  : 081234567890 (a.n. Panitia)";
+  "• Bank BCA     : 0678025685 (a.n. Muhammad Fadilah)";
 
 // Harga per tiket resmi: Rp 75.000
 const DEFAULT_TICKET_PRICE = 75000; 
