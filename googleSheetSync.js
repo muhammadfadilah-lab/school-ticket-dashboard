@@ -49,6 +49,44 @@ function generateDeterministicOrderId(phone, name) {
 }
 
 /**
+ * Normalize DD/MM/YYYY or various date formats from Google Forms into standard SQLite YYYY-MM-DD HH:mm:ss
+ */
+function normalizeDateToSqlite(str) {
+  if (!str) return new Date().toISOString().replace('T', ' ').substring(0, 19);
+  str = String(str).trim();
+
+  // DD/MM/YYYY or DD-MM-YYYY with optional HH:mm:ss or HH.mm.ss
+  const dmyMatch = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:\s+(\d{1,2})[:\.](\d{1,2})(?:[:\.](\d{1,2}))?)?/);
+  if (dmyMatch) {
+    const day = dmyMatch[1].padStart(2, '0');
+    const month = dmyMatch[2].padStart(2, '0');
+    const year = dmyMatch[3];
+    const hours = (dmyMatch[4] || '00').padStart(2, '0');
+    const minutes = (dmyMatch[5] || '00').padStart(2, '0');
+    const seconds = (dmyMatch[6] || '00').padStart(2, '0');
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+  }
+
+  // Already YYYY-MM-DD...
+  const ymdMatch = str.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})(?:[T\s](\d{1,2})[:\.](\d{1,2})(?:[:\.](\d{1,2}))?)?/);
+  if (ymdMatch) {
+    const year = ymdMatch[1];
+    const month = ymdMatch[2].padStart(2, '0');
+    const day = ymdMatch[3].padStart(2, '0');
+    const hours = (ymdMatch[4] || '00').padStart(2, '0');
+    const minutes = (ymdMatch[5] || '00').padStart(2, '0');
+    const seconds = (ymdMatch[6] || '00').padStart(2, '0');
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+  }
+
+  const d = new Date(str);
+  if (!isNaN(d.getTime())) {
+    return d.toISOString().replace('T', ' ').substring(0, 19);
+  }
+  return new Date().toISOString().replace('T', ' ').substring(0, 19);
+}
+
+/**
  * Extract Google Spreadsheet ID from URL
  */
 function extractSpreadsheetId(url) {
@@ -159,7 +197,8 @@ async function syncFromGoogleSheet(sheetUrlOrId, options = {}) {
     const have_transferred = data['Have you transferred?'] || data['Sudah transfer?'] || '';
     const sender_account_name = data["Sender's Account Name"] || data['Nama Rekening Pengirim'] || '';
     const payment_proof_url = data['Please attach your payment receipt here :'] || data['Please attach your payment receipt here'] || data['Bukti Transfer'] || '';
-    const timestampStr = data['Timestamp'] || data['Waktu'] || new Date().toISOString();
+    const rawTimestamp = data['Timestamp'] || data['Waktu'] || '';
+    const timestampStr = normalizeDateToSqlite(rawTimestamp);
 
     const cacheKey = `${phone}_${name.trim()}`;
 
@@ -183,8 +222,11 @@ async function syncFromGoogleSheet(sheetUrlOrId, options = {}) {
     }
 
     if (existing) {
-      // Update data jika ada bukti pembayaran baru
+      // Update data jika ada bukti pembayaran baru & sinkronkan created_at normal
       updateProof.run(payment_proof_url, sender_account_name, have_transferred, existing.id);
+      if (timestampStr) {
+        db.prepare('UPDATE orders SET created_at = ? WHERE id = ?').run(timestampStr, existing.id);
+      }
       updatedCount++;
 
       // Update cache
@@ -272,5 +314,6 @@ module.exports = {
   extractSpreadsheetId,
   syncFromGoogleSheet,
   loadOrdersCache,
-  saveOrdersCache
+  saveOrdersCache,
+  normalizeDateToSqlite
 };

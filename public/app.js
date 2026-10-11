@@ -349,9 +349,7 @@ function renderOrdersTable(orders) {
       `;
     }
 
-    const formattedDate = order.created_at ? new Date(order.created_at).toLocaleString('id-ID', {
-      day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
-    }) : '-';
+    const formattedDate = formatDateTime(order.created_at);
 
     const cleanWa = (order.phone || '').replace(/[^0-9]/g, '');
 
@@ -1703,6 +1701,81 @@ function copyAppsScriptCode() {
 // ==========================================
 // UTILITIES
 // ==========================================
+function parseFormDate(str) {
+  if (!str) return new Date();
+  if (str instanceof Date) return str;
+  str = String(str).trim();
+
+  // Format DD/MM/YYYY or DD-MM-YYYY
+  const dmyMatch = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:\s+(\d{1,2})[:\.](\d{1,2})(?:[:\.](\d{1,2}))?)?/);
+  if (dmyMatch) {
+    const day = parseInt(dmyMatch[1], 10);
+    const month = parseInt(dmyMatch[2], 10) - 1;
+    const year = parseInt(dmyMatch[3], 10);
+    const hours = parseInt(dmyMatch[4] || '0', 10);
+    const minutes = parseInt(dmyMatch[5] || '0', 10);
+    const seconds = parseInt(dmyMatch[6] || '0', 10);
+    return new Date(year, month, day, hours, minutes, seconds);
+  }
+
+  // Format YYYY-MM-DD
+  const ymdMatch = str.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})(?:[T\s](\d{1,2})[:\.](\d{1,2})(?:[:\.](\d{1,2}))?)?/);
+  if (ymdMatch) {
+    const year = parseInt(ymdMatch[1], 10);
+    const month = parseInt(ymdMatch[2], 10) - 1;
+    const day = parseInt(ymdMatch[3], 10);
+    const hours = parseInt(ymdMatch[4] || '0', 10);
+    const minutes = parseInt(ymdMatch[5] || '0', 10);
+    const seconds = parseInt(ymdMatch[6] || '0', 10);
+    return new Date(year, month, day, hours, minutes, seconds);
+  }
+
+  const d = new Date(str);
+  if (!isNaN(d.getTime())) return d;
+  return new Date();
+}
+
+function formatDateTime(str) {
+  if (!str) return '-';
+  str = String(str).trim();
+
+  const dmyMatch = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:\s+(\d{1,2})[:\.](\d{1,2})(?:[:\.](\d{1,2}))?)?/);
+  if (dmyMatch) {
+    const day = parseInt(dmyMatch[1], 10);
+    const month = parseInt(dmyMatch[2], 10) - 1;
+    const year = parseInt(dmyMatch[3], 10);
+    const hours = parseInt(dmyMatch[4] || '0', 10);
+    const minutes = parseInt(dmyMatch[5] || '0', 10);
+    const seconds = parseInt(dmyMatch[6] || '0', 10);
+    const d = new Date(year, month, day, hours, minutes, seconds);
+    return d.toLocaleString('id-ID', {
+      day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
+    });
+  }
+
+  const ymdMatch = str.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})(?:[T\s](\d{1,2})[:\.](\d{1,2})(?:[:\.](\d{1,2}))?)?/);
+  if (ymdMatch) {
+    const year = parseInt(ymdMatch[1], 10);
+    const month = parseInt(ymdMatch[2], 10) - 1;
+    const day = parseInt(ymdMatch[3], 10);
+    const hours = parseInt(ymdMatch[4] || '0', 10);
+    const minutes = parseInt(ymdMatch[5] || '0', 10);
+    const seconds = parseInt(ymdMatch[6] || '0', 10);
+    const d = new Date(year, month, day, hours, minutes, seconds);
+    return d.toLocaleString('id-ID', {
+      day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
+    });
+  }
+
+  const d = new Date(str);
+  if (!isNaN(d.getTime())) {
+    return d.toLocaleString('id-ID', {
+      day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
+    });
+  }
+  return str;
+}
+
 function formatRupiah(num) {
   return new Intl.NumberFormat('id-ID').format(Number(num) || 0);
 }

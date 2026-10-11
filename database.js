@@ -92,6 +92,24 @@ function initDatabase() {
     db.exec(`ALTER TABLE orders ADD COLUMN has_transferred TEXT;`);
   }
 
+  // Normalize any legacy DD/MM/YYYY dates stored in orders table
+  try {
+    const rawDateOrders = db.prepare("SELECT id, created_at FROM orders WHERE created_at LIKE '%/%'").all();
+    const updateDateStmt = db.prepare("UPDATE orders SET created_at = ? WHERE id = ?");
+    for (const row of rawDateOrders) {
+      const match = String(row.created_at).trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:\s+(\d{1,2})[:\.](\d{1,2})(?:[:\.](\d{1,2}))?)?/);
+      if (match) {
+        const day = match[1].padStart(2, '0');
+        const month = match[2].padStart(2, '0');
+        const year = match[3];
+        const h = (match[4] || '00').padStart(2, '0');
+        const m = (match[5] || '00').padStart(2, '0');
+        const s = (match[6] || '00').padStart(2, '0');
+        updateDateStmt.run(`${year}-${month}-${day} ${h}:${m}:${s}`, row.id);
+      }
+    }
+  } catch (errDate) {}
+
   const fileCfg = loadFileConfig();
 
   // Baseline Persistent Settings (Environment Variables > config/settings.json > Defaults)
