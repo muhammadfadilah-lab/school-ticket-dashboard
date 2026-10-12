@@ -13,6 +13,8 @@ async function initApp() {
   await loadSettings();
   await loadStats();
   await loadOrders();
+  loadInvitations();
+  loadCapacityRecap();
   generateAppsScriptTemplate();
   
   // Auto-sync spreadsheet in background when opening dashboard if configured
@@ -2274,26 +2276,35 @@ function debounceSearchInvitations() {
 }
 
 function openParentSwapModalById(id) {
-  const inv = allInvitations.find(x => x.id === id);
-  if (!inv) return;
+  const inv = allInvitations.find(x => String(x.id) === String(id));
+  if (!inv) {
+    console.warn('Invitation not found in local cache for id:', id);
+    fetch(`/api/invitations?search=${encodeURIComponent(id)}`).then(r => r.json()).then(res => {
+      if (res.data && res.data.length > 0) openParentSwapModal(res.data[0]);
+    }).catch(() => {});
+    return;
+  }
   openParentSwapModal(inv);
 }
 
 function openParentSwapModal(inv) {
+  if (!inv) return;
   currentEditingInvitation = inv;
   const modal = document.getElementById('parent-swap-modal');
   if (!modal) return;
 
-  document.getElementById('swap-invitation-id').value = inv.id;
+  const idEl = document.getElementById('swap-invitation-id');
+  if (idEl) idEl.value = inv.id;
+
   const title = document.getElementById('modal-swap-student-title');
   if (title) {
     title.textContent = inv.type === 'parent'
-      ? `${inv.name} (Kelas ${inv.class_grade})`
+      ? `${inv.name} (Kelas ${inv.class_grade || '-'})`
       : `${inv.name} (Tamu Undangan)`;
   }
 
   const origSess = document.getElementById('modal-swap-original-session');
-  if (origSess) origSess.textContent = inv.original_session;
+  if (origSess) origSess.textContent = inv.original_session || inv.session;
 
   const sessSelect = document.getElementById('swap-session');
   if (sessSelect) sessSelect.value = inv.session;
@@ -2308,6 +2319,7 @@ function openParentSwapModal(inv) {
   if (phoneInput) phoneInput.value = inv.phone || '';
 
   modal.classList.remove('hidden');
+  modal.classList.add('flex');
   if (window.lucide) lucide.createIcons();
 }
 
@@ -2315,6 +2327,7 @@ function closeParentSwapModal() {
   const modal = document.getElementById('parent-swap-modal');
   if (!modal) return;
   modal.classList.add('hidden');
+  modal.classList.remove('flex');
   currentEditingInvitation = null;
 }
 
@@ -2337,8 +2350,8 @@ async function handleParentSwapSubmit(e) {
 
     showToast(json.message || 'Perubahan sesi berhasil disimpan!', 'success');
     closeParentSwapModal();
-    loadInvitations();
-    if (typeof loadCapacityRecap === 'function') loadCapacityRecap();
+    await loadInvitations();
+    if (typeof loadCapacityRecap === 'function') await loadCapacityRecap();
   } catch (err) {
     alert('Gagal menyimpan perubahan: ' + err.message);
   }
@@ -2359,8 +2372,8 @@ async function handleResetInvitationSession() {
 
     showToast(json.message, 'info');
     closeParentSwapModal();
-    loadInvitations();
-    if (typeof loadCapacityRecap === 'function') loadCapacityRecap();
+    await loadInvitations();
+    if (typeof loadCapacityRecap === 'function') await loadCapacityRecap();
   } catch (err) {
     alert('Gagal mereset sesi: ' + err.message);
   }
@@ -2392,11 +2405,12 @@ function openGuestModal(guest = null) {
   }
 
   modal.classList.remove('hidden');
+  modal.classList.add('flex');
   if (window.lucide) lucide.createIcons();
 }
 
 function openEditGuestModalById(id) {
-  const guest = allInvitations.find(x => x.id === id);
+  const guest = allInvitations.find(x => String(x.id) === String(id));
   if (guest) openGuestModal(guest);
 }
 
@@ -2404,6 +2418,7 @@ function closeGuestModal() {
   const modal = document.getElementById('guest-modal');
   if (!modal) return;
   modal.classList.add('hidden');
+  modal.classList.remove('flex');
 }
 
 async function handleGuestSubmit(e) {
