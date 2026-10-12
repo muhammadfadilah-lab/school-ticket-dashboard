@@ -218,9 +218,23 @@ app.get('/api/recap/capacity', (req, res) => {
     let buyerVerifiedS2Count = 0, buyerVerifiedS2Tickets = 0;
     let buyerPendingS2Count = 0, buyerPendingS2Tickets = 0;
 
+    function detectPerformanceSession(raw) {
+      if (!raw) return 'Sesi 1';
+      const str = String(raw).toLowerCase().trim();
+      if (/session\s*1\b|sesi\s*1\b|\bsesi\s*i\b|\bsession\s*i\b|\b1\b\s*[:\-]/.test(str)) return 'Sesi 1';
+      if (/session\s*2\b|sesi\s*2\b|\bsesi\s*ii\b|\bsession\s*ii\b|\b2\b\s*[:\-]/.test(str)) return 'Sesi 2';
+      if (/^1\b|^sesi\s*1|^session\s*1/.test(str)) return 'Sesi 1';
+      if (/^2\b|^sesi\s*2|^session\s*2/.test(str)) return 'Sesi 2';
+      if (str.includes('session 1') || str.includes('sesi 1')) return 'Sesi 1';
+      if (str.includes('session 2') || str.includes('sesi 2')) return 'Sesi 2';
+      if (/09[.:]|10[.:]|11[.:]|pagi|morning/.test(str)) return 'Sesi 1';
+      if (/13[.:]|14[.:]|15[.:]|siang|afternoon/.test(str)) return 'Sesi 2';
+      return 'Sesi 1';
+    }
+
     for (const ord of allOrders) {
-      const sessStr = ((ord.performance_session || '') + ' ' + (ord.ticket_category || '')).toLowerCase();
-      const isSesi2 = sessStr.includes('2') || sessStr.includes('sesi 2') || sessStr.includes('session 2');
+      const targetSession = detectPerformanceSession(ord.performance_session || ord.ticket_category);
+      const isSesi2 = targetSession === 'Sesi 2';
       const qty = ord.ticket_qty || 1;
 
       if (isSesi2) {

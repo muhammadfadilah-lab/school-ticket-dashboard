@@ -173,7 +173,10 @@ async function syncFromGoogleSheet(sheetUrlOrId, options = {}) {
     UPDATE orders 
     SET payment_proof_url = COALESCE(NULLIF(?, ''), payment_proof_url),
         sender_account_name = COALESCE(NULLIF(?, ''), sender_account_name),
-        has_transferred = COALESCE(NULLIF(?, ''), has_transferred)
+        has_transferred = COALESCE(NULLIF(?, ''), has_transferred),
+        performance_session = COALESCE(NULLIF(?, ''), performance_session),
+        ticket_category = COALESCE(NULLIF(?, ''), ticket_category),
+        ticket_qty = COALESCE(?, ticket_qty)
     WHERE id = ?
   `);
 
@@ -223,7 +226,7 @@ async function syncFromGoogleSheet(sheetUrlOrId, options = {}) {
 
     if (existing) {
       // Update data jika ada bukti pembayaran baru & sinkronkan created_at normal
-      updateProof.run(payment_proof_url, sender_account_name, have_transferred, existing.id);
+      updateProof.run(payment_proof_url, sender_account_name, have_transferred, performance_session, ticket_category, ticket_qty, existing.id);
       if (timestampStr) {
         db.prepare('UPDATE orders SET created_at = ? WHERE id = ?').run(timestampStr, existing.id);
       }
