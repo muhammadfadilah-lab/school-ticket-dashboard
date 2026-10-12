@@ -78,6 +78,30 @@ function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
     CREATE INDEX IF NOT EXISTS idx_orders_order_id ON orders(order_id);
     CREATE INDEX IF NOT EXISTS idx_orders_phone ON orders(phone);
+
+    CREATE TABLE IF NOT EXISTS invitations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      invitation_code TEXT UNIQUE NOT NULL,
+      type TEXT NOT NULL DEFAULT 'parent',
+      name TEXT NOT NULL,
+      class_grade TEXT,
+      session TEXT NOT NULL,
+      original_session TEXT NOT NULL,
+      ticket_qty INTEGER NOT NULL DEFAULT 2,
+      is_swapped INTEGER DEFAULT 0,
+      swap_notes TEXT,
+      institution TEXT,
+      phone TEXT,
+      checked_in INTEGER DEFAULT 0,
+      checked_in_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_invitations_type ON invitations(type);
+    CREATE INDEX IF NOT EXISTS idx_invitations_session ON invitations(session);
+    CREATE INDEX IF NOT EXISTS idx_invitations_class ON invitations(class_grade);
+    CREATE INDEX IF NOT EXISTS idx_invitations_code ON invitations(invitation_code);
   `);
 
   // Column migration for specific form fields
@@ -183,6 +207,14 @@ function initDatabase() {
     {
       key: 'template_rejected',
       value: fileCfg.template_rejected || `⚠️ *PEMBERITAHUAN VERIFIKASI TIKET* ⚠️\n*{{event_name}}*\n----------------------------------------\nHalo Kak *{{name}}*,\nMohon maaf, bukti pembayaran untuk pesanan *{{order_id}}* belum dapat kami verifikasi karena:\n\n👉 *Alasan:* {{reason}}\n\nSilakan kirim ulang bukti transfer yang jelas dan valid dengan membalas pesan WhatsApp ini atau menghubungi panitia: {{contact_person}}.\n\nTerima kasih!`
+    },
+    {
+      key: 'capacity_session_1',
+      value: String(process.env.CAPACITY_SESSION_1 || fileCfg.capacity_session_1 || 350)
+    },
+    {
+      key: 'capacity_session_2',
+      value: String(process.env.CAPACITY_SESSION_2 || fileCfg.capacity_session_2 || 350)
     }
   ];
 
@@ -210,7 +242,9 @@ function initDatabase() {
     { key: 'ticket_price', env: process.env.TICKET_PRICE },
     { key: 'wa_gateway_type', env: process.env.WA_GATEWAY_TYPE },
     { key: 'wa_api_token', env: process.env.WA_API_TOKEN },
-    { key: 'bank_accounts', env: process.env.BANK_ACCOUNTS }
+    { key: 'bank_accounts', env: process.env.BANK_ACCOUNTS },
+    { key: 'capacity_session_1', env: process.env.CAPACITY_SESSION_1 },
+    { key: 'capacity_session_2', env: process.env.CAPACITY_SESSION_2 }
   ];
 
   for (const item of envKeys) {
@@ -224,6 +258,76 @@ function initDatabase() {
   if (!currentSheet || !currentSheet.value || currentSheet.value === '') {
     const fallbackSheet = process.env.GOOGLE_SHEET_URL || fileCfg.google_sheet_url || 'https://docs.google.com/spreadsheets/d/1yfkuGbePDKFCV3Zxsx6aaJiMzYEGzyPaG7cqC-xUIWQ/edit?usp=sharing';
     db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('google_sheet_url', ?)").run(fallbackSheet);
+  }
+
+  // Seed invitations (parents & guests) if empty
+  const countInvitations = db.prepare('SELECT COUNT(*) as count FROM invitations').get().count;
+  if (countInvitations === 0) {
+    const customPath = path.join(__dirname, 'config', 'invitations_custom.json');
+    const studentsPath = path.join(__dirname, 'config', 'students_data.json');
+    
+    let seedItems = [];
+    if (fs.existsSync(customPath)) {
+      try {
+        seedItems = JSON.parse(fs.readFileSync(customPath, 'utf8'));
+      } catch (e) {
+        console.warn('Error reading config/invitations_custom.json:', e.message);
+      }
+    }
+    if ((!seedItems || seedItems.length === 0) && fs.existsSync(studentsPath)) {
+      try {
+        seedItems = JSON.parse(fs.readFileSync(studentsPath, 'utf8'));
+      } catch (e) {
+        console.warn('Error reading config/students_data.json:', e.message);
+      }
+    }
+
+    if (seedItems && seedItems.length > 0) {
+      const insertInv = db.prepare(`
+        INSERT INTO invitations (
+          invitation_code, type, name, class_grade, session, original_session,
+          ticket_qty, is_swapped, swap_notes, institution, phone, checked_in, checked_in_at
+        ) VALUES (
+          @invitation_code, @type, @name, @class_grade, @session, @original_session,
+          @ticket_qty, @is_swapped, @swap_notes, @institution, @phone, @checked_in, @checked_in_at
+        )
+      `);
+      const insertMany = db.transaction((rows) => {
+        for (const item of rows) {
+          insertInv.run({
+            invitation_code: item.invitation_code,
+            type: item.type || 'parent',
+            name: item.name || item.student_name || 'Tanpa Nama',
+            class_grade: item.class_grade || null,
+            session: item.session || 'Sesi 1',
+            original_session: item.original_session || item.session || 'Sesi 1',
+            ticket_qty: item.ticket_qty !== undefined ? item.ticket_qty : 2,
+            is_swapped: item.is_swapped ? 1 : 0,
+            swap_notes: item.swap_notes || '',
+            institution: item.institution || '',
+            phone: item.phone || '',
+            checked_in: item.checked_in ? 1 : 0,
+            checked_in_at: item.checked_in_at || null
+          });
+        }
+      });
+      insertMany(seedItems);
+      console.log(`Seeded ${seedItems.length} invitations into database`);
+    }
+  }
+}
+
+// Persist all current invitations to config/invitations_custom.json
+function persistInvitationsToFile() {
+  try {
+    const rows = db.prepare('SELECT * FROM invitations ORDER BY id ASC').all();
+    const cfgDir = path.join(__dirname, 'config');
+    if (!fs.existsSync(cfgDir)) {
+      fs.mkdirSync(cfgDir, { recursive: true });
+    }
+    fs.writeFileSync(path.join(cfgDir, 'invitations_custom.json'), JSON.stringify(rows, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('Warning writing config/invitations_custom.json:', err.message);
   }
 }
 
@@ -255,5 +359,6 @@ module.exports = {
   initDatabase,
   getSettings,
   updateSetting,
-  persistSettingsToFile
+  persistSettingsToFile,
+  persistInvitationsToFile
 };

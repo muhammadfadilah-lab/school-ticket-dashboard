@@ -23,5 +23,7 @@
   "template_rejected": "⚠️ *PEMBERITAHUAN VERIFIKASI TIKET* ⚠️\n*{{event_name}}*\n----------------------------------------\nHalo Kak *{{name}}*,\nMohon maaf, bukti pembayaran untuk pesanan *{{order_id}}* belum dapat kami verifikasi karena:\n\n👉 *Alasan:* {{reason}}\n\nSilakan kirim ulang bukti transfer yang jelas dan valid dengan membalas pesan WhatsApp ini atau menghubungi panitia: {{contact_person}}.\n\nTerima kasih!",
   "google_sheet_url": "https://docs.google.com/spreadsheets/d/1yfkuGbePDKFCV3Zxsx6aaJiMzYEGzyPaG7cqC-xUIWQ/edit?usp=sharing",
   "auto_sync_enabled": true,
-  "ticket_price": 75000
+  "ticket_price": 75000,
+  "capacity_session_1": 350,
+  "capacity_session_2": 350
 }

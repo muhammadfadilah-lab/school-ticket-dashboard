@@ -117,9 +117,17 @@
         <span>Data Pembeli & Verifikasi</span>
         <span id="pending-counter-badge" class="hidden bg-amber-400 text-amber-950 text-[10px] font-black px-1.5 py-0.2 rounded-full">0</span>
       </button>
+      <button onclick="switchTab('parents')" id="tab-btn-parents" class="tab-btn px-3 py-1.5 rounded-lg font-medium text-xs sm:text-sm text-indigo-200 hover:text-white hover:bg-indigo-800/50 flex items-center gap-2 whitespace-nowrap">
+        <i data-lucide="user-check" class="w-4 h-4"></i>
+        <span>Orang Tua & Undangan</span>
+      </button>
+      <button onclick="switchTab('capacity')" id="tab-btn-capacity" class="tab-btn px-3 py-1.5 rounded-lg font-medium text-xs sm:text-sm text-indigo-200 hover:text-white hover:bg-indigo-800/50 flex items-center gap-2 whitespace-nowrap">
+        <i data-lucide="armchair" class="w-4 h-4"></i>
+        <span>Rekap Total Kursi</span>
+      </button>
       <button onclick="switchTab('recap')" id="tab-btn-recap" class="tab-btn px-3 py-1.5 rounded-lg font-medium text-xs sm:text-sm text-indigo-200 hover:text-white hover:bg-indigo-800/50 flex items-center gap-2 whitespace-nowrap">
         <i data-lucide="bar-chart-3" class="w-4 h-4"></i>
-        <span>Rekap Sesi</span>
+        <span>Rekap Sesi Form</span>
       </button>
       <button onclick="switchTab('checkin')" id="tab-btn-checkin" class="tab-btn px-3 py-1.5 rounded-lg font-medium text-xs sm:text-sm text-indigo-200 hover:text-white hover:bg-indigo-800/50 flex items-center gap-2 whitespace-nowrap">
         <i data-lucide="scan-line" class="w-4 h-4"></i>
@@ -345,6 +353,478 @@
         <div class="bg-slate-50 px-4 py-3 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
           <span>Menampilkan <strong id="orders-count-text">0</strong> transaksi</span>
           <span class="text-[11px] text-slate-400">Tips: Klik "Verifikasi Lunas" untuk langsung mengirimkan E-Tiket WhatsApp ke pembeli</span>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ============================================== -->
+    <!-- TAB: DAFTAR ORANG TUA SISWA & TAMU UNDANGAN -->
+    <!-- ============================================== -->
+    <section id="tab-content-parents" class="hidden space-y-6">
+      
+      <!-- Parents & Guests Header -->
+      <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
+        <div>
+          <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+            <i data-lucide="user-check" class="w-5 h-5 text-indigo-600"></i>
+            Daftar Orang Tua Siswa & Tamu Undangan
+          </h2>
+          <p class="text-xs text-slate-500 mt-0.5">
+            Daftar alokasi tiket resmi (2 tiket per siswa: Kelas 7 Sesi 1, Kelas 8 & 9 Sesi 2) serta tamu kehormatan. Tersedia fitur perpindahan sesi dan penyesuaian kuota tiket.
+          </p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="openGuestModal()" class="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-sm">
+            <i data-lucide="user-plus" class="w-4 h-4"></i>
+            <span>+ Tambah Tamu Undangan</span>
+          </button>
+          <a href="/api/invitations/export-csv" class="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-sm">
+            <i data-lucide="download" class="w-4 h-4"></i>
+            <span>Export CSV</span>
+          </a>
+        </div>
+      </div>
+
+      <!-- KPI Stats Bar -->
+      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+          <span class="text-[11px] text-slate-500 font-semibold block">Total Siswa</span>
+          <div class="text-xl font-black text-slate-900 mt-1" id="kpi-parent-students">170</div>
+          <span class="text-[10px] text-indigo-600 font-bold block mt-0.5" id="kpi-parent-total-tickets">340 Tiket Ortu</span>
+        </div>
+        <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+          <span class="text-[11px] text-slate-500 font-semibold block">Sesi 1 (Kelas VII)</span>
+          <div class="text-xl font-black text-blue-600 mt-1" id="kpi-parent-s1-tickets">154</div>
+          <span class="text-[10px] text-slate-400 block mt-0.5" id="kpi-parent-s1-students">77 Siswa</span>
+        </div>
+        <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+          <span class="text-[11px] text-slate-500 font-semibold block">Sesi 2 (Kelas VIII & IX)</span>
+          <div class="text-xl font-black text-purple-600 mt-1" id="kpi-parent-s2-tickets">186</div>
+          <span class="text-[10px] text-slate-400 block mt-0.5" id="kpi-parent-s2-students">93 Siswa</span>
+        </div>
+        <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+          <span class="text-[11px] text-slate-500 font-semibold block">Tamu Undangan</span>
+          <div class="text-xl font-black text-amber-600 mt-1" id="kpi-guests-count">0</div>
+          <span class="text-[10px] text-slate-400 block mt-0.5" id="kpi-guests-tickets">0 Tiket</span>
+        </div>
+        <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+          <span class="text-[11px] text-slate-500 font-semibold block">Bertukar Sesi</span>
+          <div class="text-xl font-black text-orange-600 mt-1" id="kpi-swapped-count">0</div>
+          <span class="text-[10px] text-orange-500 font-semibold block mt-0.5">Siswa / Ortu Pindah</span>
+        </div>
+        <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+          <span class="text-[11px] text-slate-500 font-semibold block">Sudah Hadir (Gate)</span>
+          <div class="text-xl font-black text-emerald-600 mt-1" id="kpi-checkedin-count">0</div>
+          <span class="text-[10px] text-emerald-600 font-semibold block mt-0.5" id="kpi-checkedin-tickets">0 Tiket Hadir</span>
+        </div>
+      </div>
+
+      <!-- Filters & Toolbar -->
+      <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
+        <div class="flex-1 relative">
+          <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3.5 top-3"></i>
+          <input type="text" id="parent-search-input" oninput="debounceSearchInvitations()" placeholder="Cari nama siswa, tamu, kode tiket (misal ORTU-7A-01)..." class="w-full pl-10 pr-4 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <!-- Class Filter -->
+          <select id="parent-filter-class" onchange="loadInvitations()" class="text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-semibold text-slate-700 focus:outline-none">
+            <option value="all">Semua Kategori & Kelas</option>
+            <option value="7A">Kelas 7A (26 Siswa - Sesi 1)</option>
+            <option value="7B">Kelas 7B (26 Siswa - Sesi 1)</option>
+            <option value="7C">Kelas 7C (25 Siswa - Sesi 1)</option>
+            <option value="8A">Kelas 8A (21 Siswa - Sesi 2)</option>
+            <option value="8B">Kelas 8B (22 Siswa - Sesi 2)</option>
+            <option value="9A">Kelas 9A (25 Siswa - Sesi 2)</option>
+            <option value="9B">Kelas 9B (25 Siswa - Sesi 2)</option>
+            <option value="guest">Tamu Undangan Saja</option>
+          </select>
+          <!-- Session Filter -->
+          <select id="parent-filter-session" onchange="loadInvitations()" class="text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-semibold text-slate-700 focus:outline-none">
+            <option value="all">Semua Sesi</option>
+            <option value="Sesi 1">Sesi 1 (Pagi)</option>
+            <option value="Sesi 2">Sesi 2 (Siang)</option>
+          </select>
+          <!-- Swap Status Filter -->
+          <select id="parent-filter-swapped" onchange="loadInvitations()" class="text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-semibold text-slate-700 focus:outline-none">
+            <option value="all">Semua Status Sesi</option>
+            <option value="1">Hanya yang Bertukar Sesi / Dimodifikasi</option>
+            <option value="0">Sesuai Alokasi Bawaan</option>
+          </select>
+          <!-- Gate Status Filter -->
+          <select id="parent-filter-gate" onchange="loadInvitations()" class="text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-semibold text-slate-700 focus:outline-none">
+            <option value="all">Semua Status Gate</option>
+            <option value="0">Belum Masuk</option>
+            <option value="1">Sudah Masuk (Check-in)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Invitations Table -->
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm" id="parents-table">
+            <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
+              <tr>
+                <th class="py-3 px-4 w-12 text-center">No</th>
+                <th class="py-3 px-4">Kode Tiket</th>
+                <th class="py-3 px-4">Kelas / Kategori</th>
+                <th class="py-3 px-4">Nama Siswa / Tamu</th>
+                <th class="py-3 px-4">Sesi Pertunjukan</th>
+                <th class="py-3 px-4 text-center">Tiket</th>
+                <th class="py-3 px-4">Catatan / Status Tukar</th>
+                <th class="py-3 px-4 text-center">Status Gate</th>
+                <th class="py-3 px-4 text-center">Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="parents-tbody" class="divide-y divide-slate-100 text-xs">
+              <tr>
+                <td colspan="9" class="py-12 text-center text-slate-400">
+                  <i data-lucide="loader" class="w-6 h-6 animate-spin mx-auto mb-2 text-indigo-500"></i>
+                  Memuat data orang tua siswa dan tamu undangan...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="p-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+          <span id="parents-table-count">Menampilkan 0 data</span>
+          <span class="text-[11px] text-slate-400">Default: 2 tiket per orang tua siswa (Kelas 7: Sesi 1, Kelas 8-9: Sesi 2)</span>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ============================================== -->
+    <!-- TAB: REKAP TOTAL KURSI & KAPASITAS GEDUNG -->
+    <!-- ============================================== -->
+    <section id="tab-content-capacity" class="hidden space-y-6">
+      
+      <!-- Capacity Header -->
+      <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
+        <div>
+          <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+            <i data-lucide="armchair" class="w-5 h-5 text-indigo-600"></i>
+            Rekapitulasi Total Kursi & Kapasitas Gedung
+          </h2>
+          <p class="text-xs text-slate-500 mt-0.5">
+            Konsolidasi menyeluruh kapasitas kursi auditorium: Orang Tua Siswa, Tamu Undangan, dan Pembeli Berbayar (Form Google & OTS).
+          </p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="loadCapacityRecap()" class="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-sm">
+            <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+            <span>Segarkan Perhitungan</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Capacity Settings Form Card -->
+      <div class="bg-gradient-to-r from-indigo-900 to-indigo-800 text-white p-6 rounded-3xl shadow-lg border border-indigo-700">
+        <div class="flex flex-col md:flex-row gap-6 items-start md:items-center justify-between">
+          <div class="max-w-xl">
+            <h3 class="font-bold text-base text-amber-300 flex items-center gap-2">
+              <i data-lucide="settings-2" class="w-5 h-5"></i>
+              Atur Total Kursi Tersedia (Kapasitas Auditorium)
+            </h3>
+            <p class="text-xs text-indigo-200 mt-1 leading-relaxed">
+              Masukkan daya tampung kursi per sesi di auditorium sekolah. Sistem akan secara otomatis menghitung sisa kursi yang masih tersedia untuk dijual atau dialokasikan.
+            </p>
+          </div>
+          <form onsubmit="handleSaveCapacity(event)" class="flex flex-wrap sm:flex-nowrap gap-3 items-center w-full md:w-auto">
+            <div>
+              <label class="block text-[11px] font-bold text-indigo-200 uppercase tracking-wider mb-1">Kapasitas Sesi 1</label>
+              <div class="relative">
+                <input type="number" min="1" id="input-cap-s1" required class="w-32 px-3 py-2 text-sm bg-white text-slate-900 font-bold rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-400">
+                <span class="text-[10px] text-slate-400 absolute right-2.5 top-2.5 font-bold">kursi</span>
+              </div>
+            </div>
+            <div>
+              <label class="block text-[11px] font-bold text-indigo-200 uppercase tracking-wider mb-1">Kapasitas Sesi 2</label>
+              <div class="relative">
+                <input type="number" min="1" id="input-cap-s2" required class="w-32 px-3 py-2 text-sm bg-white text-slate-900 font-bold rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-400">
+                <span class="text-[10px] text-slate-400 absolute right-2.5 top-2.5 font-bold">kursi</span>
+              </div>
+            </div>
+            <div class="pt-5 w-full sm:w-auto">
+              <button type="submit" class="w-full sm:w-auto px-4 py-2 bg-amber-400 hover:bg-amber-300 text-indigo-950 font-black text-xs rounded-xl transition shadow-md flex items-center justify-center gap-1.5 whitespace-nowrap">
+                <i data-lucide="save" class="w-4 h-4"></i>
+                <span>Simpan Kapasitas</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- Capacity Visual Comparison Cards (Side-by-side) -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        
+        <!-- SESI 1 CARD -->
+        <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+          <div class="p-5 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-blue-100 flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <div class="w-10 h-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center font-black text-sm shadow-md">
+                S1
+              </div>
+              <div>
+                <h3 class="font-bold text-base text-slate-900">Sesi 1 (09.30 - 12.00 WIB)</h3>
+                <span class="text-[11px] text-blue-700 font-semibold">Alokasi Utama: Kelas VII & Tamu Sesi 1</span>
+              </div>
+            </div>
+            <div class="text-right">
+              <span class="text-[10px] text-slate-500 font-bold uppercase block">Kapasitas</span>
+              <span class="text-base font-black text-slate-900" id="cap-card-s1-capacity">350 Kursi</span>
+            </div>
+          </div>
+
+          <div class="p-6 space-y-6 flex-1 flex flex-col justify-between">
+            <!-- Big Sisa Kursi Callout -->
+            <div class="p-5 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+              <div>
+                <span class="text-xs font-bold text-slate-500 uppercase tracking-wider block">Sisa Kursi Tersedia</span>
+                <div class="text-3xl font-black text-emerald-600 mt-1 flex items-baseline gap-1" id="cap-card-s1-remaining">
+                  <span>---</span>
+                  <span class="text-sm font-semibold text-slate-500">kursi</span>
+                </div>
+              </div>
+              <div class="text-right">
+                <span id="cap-card-s1-occupancy-badge" class="px-3 py-1 text-xs font-black rounded-full bg-emerald-100 text-emerald-800">
+                  Okupansi 0%
+                </span>
+                <span class="text-[11px] text-slate-400 block mt-1" id="cap-card-s1-occupied-text">0 / 350 terisi</span>
+              </div>
+            </div>
+
+            <!-- Progress Bar -->
+            <div>
+              <div class="flex justify-between text-xs font-semibold text-slate-600 mb-1.5">
+                <span>Tingkat Keterisian Auditorium</span>
+                <span id="cap-card-s1-progress-pct">0%</span>
+              </div>
+              <div class="w-full h-3 bg-slate-100 rounded-full overflow-hidden p-0.5 border border-slate-200">
+                <div id="cap-card-s1-progress-bar" class="h-full bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full transition-all duration-500" style="width: 0%"></div>
+              </div>
+            </div>
+
+            <!-- Breakdown Detail List -->
+            <div class="space-y-2.5 pt-2 border-t border-slate-100">
+              <div class="flex justify-between items-center text-xs">
+                <span class="flex items-center gap-1.5 text-slate-600">
+                  <span class="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block"></span>
+                  Orang Tua Siswa (Kelas 7 & Pindahan):
+                </span>
+                <span class="font-bold text-slate-800" id="cap-card-s1-parents">0 Tiket</span>
+              </div>
+              <div class="flex justify-between items-center text-xs">
+                <span class="flex items-center gap-1.5 text-slate-600">
+                  <span class="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block"></span>
+                  Tamu Undangan Kehormatan:
+                </span>
+                <span class="font-bold text-slate-800" id="cap-card-s1-guests">0 Tiket</span>
+              </div>
+              <div class="flex justify-between items-center text-xs">
+                <span class="flex items-center gap-1.5 text-slate-600">
+                  <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span>
+                  Pembeli Umum Lunas (Verified):
+                </span>
+                <span class="font-bold text-slate-800" id="cap-card-s1-buyers-verified">0 Tiket</span>
+              </div>
+              <div class="flex justify-between items-center text-xs font-bold pt-2 border-t border-slate-100 text-indigo-950">
+                <span>TOTAL TERISI FIX (KONFIRMASI):</span>
+                <span class="text-sm font-black text-indigo-700" id="cap-card-s1-total-occupied">0 Tiket</span>
+              </div>
+              <div class="flex justify-between items-center text-xs text-amber-700 bg-amber-50 p-2.5 rounded-xl border border-amber-200">
+                <span>Pembeli Pending (Menunggu Verifikasi):</span>
+                <span class="font-bold" id="cap-card-s1-buyers-pending">0 Tiket</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SESI 2 CARD -->
+        <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+          <div class="p-5 bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-purple-100 flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <div class="w-10 h-10 rounded-2xl bg-purple-600 text-white flex items-center justify-center font-black text-sm shadow-md">
+                S2
+              </div>
+              <div>
+                <h3 class="font-bold text-base text-slate-900">Sesi 2 (13.00 - 15.30 WIB)</h3>
+                <span class="text-[11px] text-purple-700 font-semibold">Alokasi Utama: Kelas VIII & IX & Tamu Sesi 2</span>
+              </div>
+            </div>
+            <div class="text-right">
+              <span class="text-[10px] text-slate-500 font-bold uppercase block">Kapasitas</span>
+              <span class="text-base font-black text-slate-900" id="cap-card-s2-capacity">350 Kursi</span>
+            </div>
+          </div>
+
+          <div class="p-6 space-y-6 flex-1 flex flex-col justify-between">
+            <!-- Big Sisa Kursi Callout -->
+            <div class="p-5 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+              <div>
+                <span class="text-xs font-bold text-slate-500 uppercase tracking-wider block">Sisa Kursi Tersedia</span>
+                <div class="text-3xl font-black text-emerald-600 mt-1 flex items-baseline gap-1" id="cap-card-s2-remaining">
+                  <span>---</span>
+                  <span class="text-sm font-semibold text-slate-500">kursi</span>
+                </div>
+              </div>
+              <div class="text-right">
+                <span id="cap-card-s2-occupancy-badge" class="px-3 py-1 text-xs font-black rounded-full bg-emerald-100 text-emerald-800">
+                  Okupansi 0%
+                </span>
+                <span class="text-[11px] text-slate-400 block mt-1" id="cap-card-s2-occupied-text">0 / 350 terisi</span>
+              </div>
+            </div>
+
+            <!-- Progress Bar -->
+            <div>
+              <div class="flex justify-between text-xs font-semibold text-slate-600 mb-1.5">
+                <span>Tingkat Keterisian Auditorium</span>
+                <span id="cap-card-s2-progress-pct">0%</span>
+              </div>
+              <div class="w-full h-3 bg-slate-100 rounded-full overflow-hidden p-0.5 border border-slate-200">
+                <div id="cap-card-s2-progress-bar" class="h-full bg-gradient-to-r from-purple-500 to-indigo-600 rounded-full transition-all duration-500" style="width: 0%"></div>
+              </div>
+            </div>
+
+            <!-- Breakdown Detail List -->
+            <div class="space-y-2.5 pt-2 border-t border-slate-100">
+              <div class="flex justify-between items-center text-xs">
+                <span class="flex items-center gap-1.5 text-slate-600">
+                  <span class="w-2.5 h-2.5 rounded-full bg-purple-500 inline-block"></span>
+                  Orang Tua Siswa (Kelas 8, 9 & Pindahan):
+                </span>
+                <span class="font-bold text-slate-800" id="cap-card-s2-parents">0 Tiket</span>
+              </div>
+              <div class="flex justify-between items-center text-xs">
+                <span class="flex items-center gap-1.5 text-slate-600">
+                  <span class="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block"></span>
+                  Tamu Undangan Kehormatan:
+                </span>
+                <span class="font-bold text-slate-800" id="cap-card-s2-guests">0 Tiket</span>
+              </div>
+              <div class="flex justify-between items-center text-xs">
+                <span class="flex items-center gap-1.5 text-slate-600">
+                  <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span>
+                  Pembeli Umum Lunas (Verified):
+                </span>
+                <span class="font-bold text-slate-800" id="cap-card-s2-buyers-verified">0 Tiket</span>
+              </div>
+              <div class="flex justify-between items-center text-xs font-bold pt-2 border-t border-slate-100 text-indigo-950">
+                <span>TOTAL TERISI FIX (KONFIRMASI):</span>
+                <span class="text-sm font-black text-purple-700" id="cap-card-s2-total-occupied">0 Tiket</span>
+              </div>
+              <div class="flex justify-between items-center text-xs text-amber-700 bg-amber-50 p-2.5 rounded-xl border border-amber-200">
+                <span>Pembeli Pending (Menunggu Verifikasi):</span>
+                <span class="font-bold" id="cap-card-s2-buyers-pending">0 Tiket</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Grand Total Master Table Matrix -->
+      <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="p-5 border-b border-slate-100 flex flex-col md:flex-row gap-3 items-start md:items-center justify-between bg-slate-50">
+          <div>
+            <h3 class="font-bold text-sm text-slate-900 flex items-center gap-2">
+              <i data-lucide="table-2" class="w-4 h-4 text-indigo-600"></i>
+              Tabel Matriks Konsolidasi Seluruh Tiket & Sisa Kursi
+            </h3>
+            <p class="text-xs text-slate-500">Perbandingan detail alokasi per kategori peserta terhadap kapasitas auditorium.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-bold bg-indigo-100 text-indigo-800 px-3 py-1.5 rounded-xl" id="cap-matrix-grand-summary">
+              Total Kapasitas: 700 Kursi
+            </span>
+          </div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm">
+            <thead class="bg-slate-100/70 text-slate-600 text-xs uppercase tracking-wider border-b border-slate-200 font-bold">
+              <tr>
+                <th class="py-3.5 px-5">Komponen / Kategori Tiket</th>
+                <th class="py-3.5 px-5 text-center">Sesi 1 (Pagi)</th>
+                <th class="py-3.5 px-5 text-center">Sesi 2 (Siang)</th>
+                <th class="py-3.5 px-5 text-center">Grand Total</th>
+                <th class="py-3.5 px-5">Keterangan Aturan</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100 text-xs">
+              <tr class="hover:bg-slate-50/50">
+                <td class="py-3.5 px-5 font-bold text-slate-800 flex items-center gap-2">
+                  <span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
+                  1. Orang Tua Siswa (Kelas 7, 8, 9)
+                </td>
+                <td class="py-3.5 px-5 text-center font-bold text-blue-600" id="matrix-parents-s1">154 Tiket</td>
+                <td class="py-3.5 px-5 text-center font-bold text-purple-600" id="matrix-parents-s2">186 Tiket</td>
+                <td class="py-3.5 px-5 text-center font-black text-slate-900" id="matrix-parents-total">340 Tiket</td>
+                <td class="py-3.5 px-5 text-slate-500">2 tiket/siswa (Kelas 7 default S1, Kelas 8 & 9 default S2)</td>
+              </tr>
+              <tr class="hover:bg-slate-50/50">
+                <td class="py-3.5 px-5 font-bold text-slate-800 flex items-center gap-2">
+                  <span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                  2. Tamu Undangan Kehormatan
+                </td>
+                <td class="py-3.5 px-5 text-center font-bold text-amber-600" id="matrix-guests-s1">0 Tiket</td>
+                <td class="py-3.5 px-5 text-center font-bold text-amber-600" id="matrix-guests-s2">0 Tiket</td>
+                <td class="py-3.5 px-5 text-center font-black text-slate-900" id="matrix-guests-total">0 Tiket</td>
+                <td class="py-3.5 px-5 text-slate-500">Daftar tamu khusus panitia / sekolah</td>
+              </tr>
+              <tr class="hover:bg-slate-50/50">
+                <td class="py-3.5 px-5 font-bold text-slate-800 flex items-center gap-2">
+                  <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                  3. Pembeli Berbayar Lunas (Google Form / OTS)
+                </td>
+                <td class="py-3.5 px-5 text-center font-bold text-emerald-600" id="matrix-buyers-s1">0 Tiket</td>
+                <td class="py-3.5 px-5 text-center font-bold text-emerald-600" id="matrix-buyers-s2">0 Tiket</td>
+                <td class="py-3.5 px-5 text-center font-black text-emerald-700" id="matrix-buyers-total">0 Tiket</td>
+                <td class="py-3.5 px-5 text-slate-500">Pembayaran terverifikasi mutasi bank panitia</td>
+              </tr>
+              <tr class="bg-indigo-50/40 font-bold border-t-2 border-indigo-200">
+                <td class="py-3.5 px-5 text-indigo-950 font-black">
+                  TOTAL TERISI (FIX / LUNAS)
+                </td>
+                <td class="py-3.5 px-5 text-center text-sm font-black text-blue-700" id="matrix-occupied-s1">0</td>
+                <td class="py-3.5 px-5 text-center text-sm font-black text-purple-700" id="matrix-occupied-s2">0</td>
+                <td class="py-3.5 px-5 text-center text-sm font-black text-indigo-900" id="matrix-occupied-total">0 Tiket</td>
+                <td class="py-3.5 px-5 text-indigo-900 font-semibold" id="matrix-occupied-pct">Okupansi 0%</td>
+              </tr>
+              <tr class="hover:bg-slate-50/50 text-slate-600">
+                <td class="py-3 px-5 text-amber-800 flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+                  <em>* Pembeli Pending (Menunggu Verifikasi)</em>
+                </td>
+                <td class="py-3 px-5 text-center text-amber-700 font-semibold" id="matrix-pending-s1">0 Tiket</td>
+                <td class="py-3 px-5 text-center text-amber-700 font-semibold" id="matrix-pending-s2">0 Tiket</td>
+                <td class="py-3 px-5 text-center text-amber-800 font-bold" id="matrix-pending-total">0 Tiket</td>
+                <td class="py-3 px-5 text-slate-400">Belum disetujui panitia</td>
+              </tr>
+              <tr class="bg-slate-100 font-bold border-t border-slate-200">
+                <td class="py-3.5 px-5 text-slate-800">
+                  TOTAL KAPASITAS AUDITORIUM
+                </td>
+                <td class="py-3.5 px-5 text-center font-black text-slate-900" id="matrix-capacity-s1">350 Kursi</td>
+                <td class="py-3.5 px-5 text-center font-black text-slate-900" id="matrix-capacity-s2">350 Kursi</td>
+                <td class="py-3.5 px-5 text-center font-black text-slate-900" id="matrix-capacity-total">700 Kursi</td>
+                <td class="py-3.5 px-5 text-slate-500">Konfigurasi kapasitas ruangan</td>
+              </tr>
+              <tr class="bg-emerald-50/60 font-black text-emerald-950 border-t-2 border-emerald-300">
+                <td class="py-4 px-5 text-sm flex items-center gap-2">
+                  <i data-lucide="check-circle" class="w-5 h-5 text-emerald-600"></i>
+                  SISA KURSI TERSEDIA SAAT INI
+                </td>
+                <td class="py-4 px-5 text-center text-base text-emerald-700" id="matrix-remaining-s1">---</td>
+                <td class="py-4 px-5 text-center text-base text-emerald-700" id="matrix-remaining-s2">---</td>
+                <td class="py-4 px-5 text-center text-base text-emerald-800" id="matrix-remaining-total">---</td>
+                <td class="py-4 px-5 text-xs font-bold text-emerald-800">
+                  Siap dialokasikan untuk penjualan umum / OTS
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -1094,6 +1574,152 @@
           <button type="submit" id="sync-submit-btn" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-5 py-2.5 rounded-xl transition shadow-md flex items-center gap-1.5">
             <i data-lucide="refresh-cw" class="w-4 h-4" id="sync-btn-spinner"></i>
             <span id="sync-btn-label">Tarik & Sinkronkan Sekarang</span>
+          </button>
+        </div>
+      </form>
+  <!-- ============================================== -->
+  <!-- MODAL: UBAH SESI & TIKET ORANG TUA SISWA -->
+  <!-- ============================================== -->
+  <div id="parent-swap-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl animate-in fade-in zoom-in duration-150">
+      <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
+            <i data-lucide="arrow-left-right" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h3 class="font-bold text-base text-slate-900">Ubah Sesi & Tiket Siswa</h3>
+            <p id="modal-swap-student-title" class="text-xs text-indigo-600 font-semibold">Nama Siswa (Kelas)</p>
+          </div>
+        </div>
+        <button onclick="closeParentSwapModal()" class="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition">✕</button>
+      </div>
+
+      <form onsubmit="handleParentSwapSubmit(event)" class="space-y-4">
+        <input type="hidden" id="swap-invitation-id">
+
+        <!-- Info Bawaan -->
+        <div class="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs flex justify-between items-center">
+          <div>
+            <span class="text-slate-400 block text-[10px] uppercase font-bold">Sesi Bawaan Sekolah:</span>
+            <span id="modal-swap-original-session" class="font-bold text-slate-800">Sesi 1</span>
+          </div>
+          <div>
+            <span class="text-slate-400 block text-[10px] uppercase font-bold text-right">Kuota Default:</span>
+            <span class="font-bold text-slate-800 text-right block">2 Tiket (Pax)</span>
+          </div>
+        </div>
+
+        <!-- Pilih Sesi Baru -->
+        <div>
+          <label class="block text-xs font-bold text-slate-700 mb-1">Pilih Sesi Pertunjukan *</label>
+          <select id="swap-session" required class="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 focus:bg-white focus:ring-2 focus:ring-indigo-500">
+            <option value="Sesi 1">Sesi 1 (Pagi: 09.30 - 12.00 WIB)</option>
+            <option value="Sesi 2">Sesi 2 (Siang: 13.00 - 15.30 WIB)</option>
+          </select>
+          <span class="text-[11px] text-slate-400 mt-1 block">Kelas VII default Sesi 1. Kelas VIII & IX default Sesi 2.</span>
+        </div>
+
+        <!-- Jumlah Tiket -->
+        <div>
+          <label class="block text-xs font-bold text-slate-700 mb-1">Jumlah Tiket Orang Tua *</label>
+          <div class="relative">
+            <input type="number" id="swap-ticket-qty" min="0" max="10" required class="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 focus:bg-white focus:ring-2 focus:ring-indigo-500">
+            <span class="text-[11px] text-slate-400 absolute right-3 top-2.5 font-bold">Pax / Orang</span>
+          </div>
+          <span class="text-[11px] text-slate-400 mt-1 block">Ubah jika orang tua meminta tiket tambahan atau mengurangi kuota.</span>
+        </div>
+
+        <!-- Catatan Tukar -->
+        <div>
+          <label class="block text-xs font-bold text-slate-700 mb-1">Catatan / Alasan Pindah Sesi</label>
+          <textarea id="swap-notes" rows="2" placeholder="Contoh: Bertukar sesi dengan orang tua siswa X (9B), atau ada keperluan keluarga di sesi pagi" class="w-full p-3 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500"></textarea>
+        </div>
+
+        <!-- No HP Ortu -->
+        <div>
+          <label class="block text-xs font-bold text-slate-700 mb-1">No. WhatsApp / Telepon Orang Tua (Opsional)</label>
+          <input type="text" id="swap-phone" placeholder="08xxxxxxxxxx" class="w-full px-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500">
+        </div>
+
+        <!-- Actions -->
+        <div class="pt-3 border-t border-slate-100 flex flex-wrap gap-2 justify-between items-center">
+          <button type="button" onclick="handleResetInvitationSession()" class="text-xs font-bold text-red-600 hover:text-red-700 hover:bg-red-50 px-3 py-2 rounded-xl transition">
+            Reset ke Bawaan
+          </button>
+          <div class="flex gap-2">
+            <button type="button" onclick="closeParentSwapModal()" class="px-4 py-2 text-xs font-semibold rounded-xl text-slate-600 hover:bg-slate-100">Batal</button>
+            <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-5 py-2 rounded-xl transition shadow-md flex items-center gap-1.5">
+              <i data-lucide="check" class="w-4 h-4"></i>
+              <span>Simpan Perubahan</span>
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ============================================== -->
+  <!-- MODAL: TAMBAH / EDIT TAMU UNDANGAN -->
+  <!-- ============================================== -->
+  <div id="guest-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl animate-in fade-in zoom-in duration-150">
+      <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
+            <i data-lucide="crown" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h3 class="font-bold text-base text-slate-900" id="guest-modal-title">Tambah Tamu Undangan</h3>
+            <p class="text-xs text-slate-500">Kelola kuota tiket untuk tamu kehormatan sekolah</p>
+          </div>
+        </div>
+        <button onclick="closeGuestModal()" class="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition">✕</button>
+      </div>
+
+      <form onsubmit="handleGuestSubmit(event)" class="space-y-4">
+        <input type="hidden" id="guest-id">
+
+        <div>
+          <label class="block text-xs font-bold text-slate-700 mb-1">Nama Tamu Undangan / Pejabat *</label>
+          <input type="text" id="guest-name" required placeholder="Contoh: Bpk. Dr. H. Hendra / Ibu Siska" class="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-amber-500">
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 mb-1">Instansi / Asal Lembaga</label>
+            <input type="text" id="guest-institution" placeholder="Contoh: Pengurus Yayasan, Dinas..." class="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-amber-500">
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-700 mb-1">Sesi Pertunjukan *</label>
+            <select id="guest-session" required class="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 focus:bg-white focus:ring-2 focus:ring-amber-500">
+              <option value="Sesi 1">Sesi 1 (09.30 - 12.00 WIB)</option>
+              <option value="Sesi 2">Sesi 2 (13.00 - 15.30 WIB)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 mb-1">Jumlah Tiket Undangan *</label>
+            <input type="number" id="guest-ticket-qty" min="1" max="10" value="2" required class="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 focus:bg-white focus:ring-2 focus:ring-amber-500">
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-700 mb-1">No. WhatsApp / HP</label>
+            <input type="text" id="guest-phone" placeholder="08xxxxxxxxxx" class="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-amber-500">
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold text-slate-700 mb-1">Catatan Khusus (Opsional)</label>
+          <input type="text" id="guest-notes" placeholder="Misal: VIP Seat Baris Depan / Tamu Kepala Sekolah" class="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-amber-500">
+        </div>
+
+        <div class="pt-3 border-t border-slate-100 flex gap-2 justify-end">
+          <button type="button" onclick="closeGuestModal()" class="px-4 py-2 text-xs font-semibold rounded-xl text-slate-600 hover:bg-slate-100">Batal</button>
+          <button type="submit" class="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold px-5 py-2.5 rounded-xl transition shadow-md flex items-center gap-1.5">
+            <i data-lucide="check" class="w-4 h-4"></i>
+            <span>Simpan Tamu Undangan</span>
           </button>
         </div>
       </form>

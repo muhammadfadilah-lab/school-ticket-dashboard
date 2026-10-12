@@ -42,6 +42,8 @@ function refreshData() {
   if (icon) icon.classList.add('animate-spin');
   
   const tasks = [loadStats(), loadOrders()];
+  if (typeof loadInvitations === 'function') tasks.push(loadInvitations());
+  if (typeof loadCapacityRecap === 'function') tasks.push(loadCapacityRecap());
   if (currentSettings.google_sheet_url && currentSettings.auto_sync_enabled !== false && currentSettings.auto_sync_enabled !== 'false') {
     tasks.push(
       fetch('/api/sync/google-sheet', {
@@ -73,7 +75,7 @@ function switchTab(tabId) {
     stopCameraScanner();
   }
 
-  const tabs = ['overview', 'orders', 'recap', 'checkin', 'manual', 'settings'];
+  const tabs = ['overview', 'orders', 'parents', 'capacity', 'recap', 'checkin', 'manual', 'settings'];
   tabs.forEach(t => {
     const content = document.getElementById(`tab-content-${t}`);
     const btn = document.getElementById(`tab-btn-${t}`);
@@ -89,6 +91,12 @@ function switchTab(tabId) {
     }
   });
 
+  if (tabId === 'parents') {
+    loadInvitations();
+  }
+  if (tabId === 'capacity') {
+    loadCapacityRecap();
+  }
   if (tabId === 'recap') {
     loadSessionRecap();
   }
@@ -2079,6 +2087,583 @@ async function handleGoogleSheetSync(e) {
     submitBtn.disabled = false;
     if (spinner) spinner.classList.remove('animate-spin');
     if (label) label.textContent = 'Tarik & Sinkronkan Sekarang';
+  }
+}
+
+// ==========================================
+// ORANG TUA SISWA & TAMU UNDANGAN
+// ==========================================
+let allInvitations = [];
+let parentSearchDebounceTimer = null;
+let currentEditingInvitation = null;
+
+async function loadInvitations() {
+  const tbody = document.getElementById('parents-tbody');
+  if (!tbody) return;
+
+  const search = (document.getElementById('parent-search-input')?.value || '').trim();
+  const classGrade = document.getElementById('parent-filter-class')?.value || 'all';
+  const session = document.getElementById('parent-filter-session')?.value || 'all';
+  const swapped = document.getElementById('parent-filter-swapped')?.value || 'all';
+  const gate = document.getElementById('parent-filter-gate')?.value || 'all';
+
+  const params = new URLSearchParams();
+  if (search) params.append('search', search);
+  if (classGrade !== 'all') params.append('class_grade', classGrade);
+  if (session !== 'all') params.append('session', session);
+  if (swapped !== 'all') params.append('is_swapped', swapped);
+  if (gate !== 'all') params.append('checked_in', gate);
+
+  try {
+    const res = await fetch(`/api/invitations?${params.toString()}`);
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || 'Gagal memuat data');
+
+    allInvitations = json.data || [];
+    const meta = json.meta || {};
+
+    // Update KPI counters
+    const kpiStudents = document.getElementById('kpi-parent-students');
+    if (kpiStudents) kpiStudents.textContent = meta.totalParents || 0;
+
+    const kpiParentTotalTickets = document.getElementById('kpi-parent-total-tickets');
+    if (kpiParentTotalTickets) kpiParentTotalTickets.textContent = `${(meta.parentTicketsS1 || 0) + (meta.parentTicketsS2 || 0)} Tiket Ortu`;
+
+    const kpiS1Tickets = document.getElementById('kpi-parent-s1-tickets');
+    if (kpiS1Tickets) kpiS1Tickets.textContent = meta.parentTicketsS1 || 0;
+
+    const kpiS1Students = document.getElementById('kpi-parent-s1-students');
+    if (kpiS1Students) {
+      const s1StudentsCount = allInvitations.filter(x => x.type === 'parent' && x.session === 'Sesi 1').length;
+      kpiS1Students.textContent = `${s1StudentsCount} Siswa Alokasi S1`;
+    }
+
+    const kpiS2Tickets = document.getElementById('kpi-parent-s2-tickets');
+    if (kpiS2Tickets) kpiS2Tickets.textContent = meta.parentTicketsS2 || 0;
+
+    const kpiS2Students = document.getElementById('kpi-parent-s2-students');
+    if (kpiS2Students) {
+      const s2StudentsCount = allInvitations.filter(x => x.type === 'parent' && x.session === 'Sesi 2').length;
+      kpiS2Students.textContent = `${s2StudentsCount} Siswa Alokasi S2`;
+    }
+
+    const kpiGuests = document.getElementById('kpi-guests-count');
+    if (kpiGuests) kpiGuests.textContent = meta.totalGuests || 0;
+
+    const kpiGuestsTickets = document.getElementById('kpi-guests-tickets');
+    if (kpiGuestsTickets) kpiGuestsTickets.textContent = `${(meta.guestTicketsS1 || 0) + (meta.guestTicketsS2 || 0)} Tiket Undangan`;
+
+    const kpiSwapped = document.getElementById('kpi-swapped-count');
+    if (kpiSwapped) kpiSwapped.textContent = meta.totalSwapped || 0;
+
+    const kpiCheckedin = document.getElementById('kpi-checkedin-count');
+    if (kpiCheckedin) kpiCheckedin.textContent = meta.totalCheckedIn || 0;
+
+    const kpiCheckedinTickets = document.getElementById('kpi-checkedin-tickets');
+    if (kpiCheckedinTickets) kpiCheckedinTickets.textContent = `${meta.totalCheckedInTickets || 0} Tiket Hadir`;
+
+    // Render Table
+    if (allInvitations.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="9" class="py-12 text-center text-slate-400">
+            <i data-lucide="inbox" class="w-8 h-8 mx-auto mb-2 text-slate-300"></i>
+            Tidak ada data orang tua siswa atau tamu yang cocok dengan filter.
+          </td>
+        </tr>
+      `;
+    } else {
+      tbody.innerHTML = allInvitations.map((row, idx) => {
+        const isParent = row.type === 'parent';
+        const isSwapped = row.is_swapped === 1;
+        const isCheckedIn = row.checked_in === 1;
+
+        const classBadge = isParent
+          ? `<span class="bg-indigo-100 text-indigo-800 font-bold px-2 py-0.5 rounded-md text-[11px] whitespace-nowrap">Kelas ${row.class_grade}</span>`
+          : `<span class="bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-md text-[11px] whitespace-nowrap inline-flex items-center gap-1"><i data-lucide="crown" class="w-3 h-3"></i> Tamu</span>`;
+
+        const sessionBadge = row.session === 'Sesi 1'
+          ? `<span class="bg-blue-50 text-blue-700 border border-blue-200 font-bold px-2 py-0.5 rounded-lg text-xs whitespace-nowrap">Sesi 1 (Pagi)</span>`
+          : `<span class="bg-purple-50 text-purple-700 border border-purple-200 font-bold px-2 py-0.5 rounded-lg text-xs whitespace-nowrap">Sesi 2 (Siang)</span>`;
+
+        const swapBadge = isSwapped
+          ? `<div class="mt-1 text-[10px] font-bold text-orange-600 bg-orange-50 border border-orange-200 px-1.5 py-0.5 rounded inline-block">
+               🔄 Pindah dari ${row.original_session}
+             </div>`
+          : '';
+
+        const gateBadge = isCheckedIn
+          ? `<span class="bg-emerald-100 text-emerald-800 font-black px-2 py-0.5 rounded-md text-[11px] inline-flex items-center gap-1">
+               <i data-lucide="check" class="w-3 h-3"></i> Hadir
+             </span>
+             ${row.checked_in_at ? `<div class="text-[10px] text-slate-400 mt-0.5">${formatDateTime(row.checked_in_at)}</div>` : ''}`
+          : `<span class="bg-slate-100 text-slate-500 font-medium px-2 py-0.5 rounded-md text-[11px]">Belum</span>`;
+
+        const notesText = row.swap_notes || row.institution || '';
+
+        return `
+          <tr class="hover:bg-slate-50/80 transition-colors ${isCheckedIn ? 'bg-emerald-50/20' : ''}">
+            <td class="py-3 px-4 text-center font-medium text-slate-400">${idx + 1}</td>
+            <td class="py-3 px-4 font-mono font-bold text-slate-800 text-xs">${row.invitation_code}</td>
+            <td class="py-3 px-4">${classBadge}</td>
+            <td class="py-3 px-4">
+              <div class="font-bold text-slate-900">${row.name}</div>
+              ${isParent ? `<div class="text-[10px] text-slate-400">Orang Tua Siswa ${row.name}</div>` : ''}
+              ${row.phone ? `<div class="text-[10px] text-emerald-600 font-medium">${row.phone}</div>` : ''}
+            </td>
+            <td class="py-3 px-4">
+              ${sessionBadge}
+              ${swapBadge}
+            </td>
+            <td class="py-3 px-4 text-center">
+              <span class="font-black text-slate-900 text-xs">${row.ticket_qty}</span>
+              <span class="text-[10px] text-slate-400 block">Pax</span>
+            </td>
+            <td class="py-3 px-4 max-w-xs">
+              ${notesText ? `<span class="text-xs text-slate-700 italic">${notesText}</span>` : `<span class="text-slate-300">-</span>`}
+            </td>
+            <td class="py-3 px-4 text-center">
+              ${gateBadge}
+            </td>
+            <td class="py-3 px-4 text-center whitespace-nowrap">
+              <div class="flex items-center justify-center gap-1.5">
+                <button onclick="openParentSwapModalById(${row.id})" class="px-2.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[11px] transition flex items-center gap-1" title="Ubah Sesi atau Jumlah Tiket">
+                  <i data-lucide="arrow-left-right" class="w-3.5 h-3.5"></i>
+                  <span>Ubah Sesi</span>
+                </button>
+                <button onclick="toggleInvitationCheckin(${row.id})" class="p-1.5 rounded-lg ${isCheckedIn ? 'bg-amber-100 text-amber-800 hover:bg-amber-200' : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'} transition" title="${isCheckedIn ? 'Batalkan Presensi (Uncheck-in)' : 'Tandai Hadir di Gate (Check-in)'}">
+                  <i data-lucide="${isCheckedIn ? 'undo-2' : 'scan-line'}" class="w-3.5 h-3.5"></i>
+                </button>
+                ${!isParent ? `
+                  <button onclick="openEditGuestModalById(${row.id})" class="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition" title="Edit Tamu">
+                    <i data-lucide="edit-2" class="w-3.5 h-3.5"></i>
+                  </button>
+                  <button onclick="deleteGuest(${row.id}, '${row.name}')" class="p-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 transition" title="Hapus Tamu">
+                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                  </button>
+                ` : ''}
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    const countLabel = document.getElementById('parents-table-count');
+    if (countLabel) {
+      countLabel.textContent = `Menampilkan ${allInvitations.length} data (${meta.totalParents || 0} Siswa/Ortu, ${meta.totalGuests || 0} Tamu)`;
+    }
+
+    if (window.lucide) lucide.createIcons();
+  } catch (err) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="9" class="py-8 text-center text-red-500 font-semibold">
+          Gagal memuat data: ${err.message}
+        </td>
+      </tr>
+    `;
+  }
+}
+
+function debounceSearchInvitations() {
+  clearTimeout(parentSearchDebounceTimer);
+  parentSearchDebounceTimer = setTimeout(() => {
+    loadInvitations();
+  }, 250);
+}
+
+function openParentSwapModalById(id) {
+  const inv = allInvitations.find(x => x.id === id);
+  if (!inv) return;
+  openParentSwapModal(inv);
+}
+
+function openParentSwapModal(inv) {
+  currentEditingInvitation = inv;
+  const modal = document.getElementById('parent-swap-modal');
+  if (!modal) return;
+
+  document.getElementById('swap-invitation-id').value = inv.id;
+  const title = document.getElementById('modal-swap-student-title');
+  if (title) {
+    title.textContent = inv.type === 'parent'
+      ? `${inv.name} (Kelas ${inv.class_grade})`
+      : `${inv.name} (Tamu Undangan)`;
+  }
+
+  const origSess = document.getElementById('modal-swap-original-session');
+  if (origSess) origSess.textContent = inv.original_session;
+
+  const sessSelect = document.getElementById('swap-session');
+  if (sessSelect) sessSelect.value = inv.session;
+
+  const qtyInput = document.getElementById('swap-ticket-qty');
+  if (qtyInput) qtyInput.value = inv.ticket_qty;
+
+  const notesInput = document.getElementById('swap-notes');
+  if (notesInput) notesInput.value = inv.swap_notes || '';
+
+  const phoneInput = document.getElementById('swap-phone');
+  if (phoneInput) phoneInput.value = inv.phone || '';
+
+  modal.classList.remove('hidden');
+  if (window.lucide) lucide.createIcons();
+}
+
+function closeParentSwapModal() {
+  const modal = document.getElementById('parent-swap-modal');
+  if (!modal) return;
+  modal.classList.add('hidden');
+  currentEditingInvitation = null;
+}
+
+async function handleParentSwapSubmit(e) {
+  e.preventDefault();
+  const id = document.getElementById('swap-invitation-id').value;
+  const session = document.getElementById('swap-session').value;
+  const ticket_qty = document.getElementById('swap-ticket-qty').value;
+  const swap_notes = document.getElementById('swap-notes').value;
+  const phone = document.getElementById('swap-phone').value;
+
+  try {
+    const res = await fetch(`/api/invitations/${id}/update-session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session, ticket_qty, swap_notes, phone })
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || json.message);
+
+    showToast(json.message || 'Perubahan sesi berhasil disimpan!', 'success');
+    closeParentSwapModal();
+    loadInvitations();
+    if (typeof loadCapacityRecap === 'function') loadCapacityRecap();
+  } catch (err) {
+    alert('Gagal menyimpan perubahan: ' + err.message);
+  }
+}
+
+async function handleResetInvitationSession() {
+  if (!currentEditingInvitation) return;
+  if (!confirm(`Kembalikan alokasi ${currentEditingInvitation.name} ke sesi bawaan (${currentEditingInvitation.original_session}, 2 tiket)?`)) {
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/invitations/${currentEditingInvitation.id}/reset-session`, {
+      method: 'POST'
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || json.message);
+
+    showToast(json.message, 'info');
+    closeParentSwapModal();
+    loadInvitations();
+    if (typeof loadCapacityRecap === 'function') loadCapacityRecap();
+  } catch (err) {
+    alert('Gagal mereset sesi: ' + err.message);
+  }
+}
+
+function openGuestModal(guest = null) {
+  const modal = document.getElementById('guest-modal');
+  if (!modal) return;
+
+  const titleEl = document.getElementById('guest-modal-title');
+  if (guest) {
+    if (titleEl) titleEl.textContent = 'Edit Tamu Undangan';
+    document.getElementById('guest-id').value = guest.id;
+    document.getElementById('guest-name').value = guest.name;
+    document.getElementById('guest-institution').value = guest.institution || '';
+    document.getElementById('guest-session').value = guest.session;
+    document.getElementById('guest-ticket-qty').value = guest.ticket_qty;
+    document.getElementById('guest-phone').value = guest.phone || '';
+    document.getElementById('guest-notes').value = guest.swap_notes || '';
+  } else {
+    if (titleEl) titleEl.textContent = 'Tambah Tamu Undangan Baru';
+    document.getElementById('guest-id').value = '';
+    document.getElementById('guest-name').value = '';
+    document.getElementById('guest-institution').value = '';
+    document.getElementById('guest-session').value = 'Sesi 1';
+    document.getElementById('guest-ticket-qty').value = 2;
+    document.getElementById('guest-phone').value = '';
+    document.getElementById('guest-notes').value = '';
+  }
+
+  modal.classList.remove('hidden');
+  if (window.lucide) lucide.createIcons();
+}
+
+function openEditGuestModalById(id) {
+  const guest = allInvitations.find(x => x.id === id);
+  if (guest) openGuestModal(guest);
+}
+
+function closeGuestModal() {
+  const modal = document.getElementById('guest-modal');
+  if (!modal) return;
+  modal.classList.add('hidden');
+}
+
+async function handleGuestSubmit(e) {
+  e.preventDefault();
+  const id = document.getElementById('guest-id').value;
+  const name = document.getElementById('guest-name').value.trim();
+  const institution = document.getElementById('guest-institution').value.trim();
+  const session = document.getElementById('guest-session').value;
+  const ticket_qty = document.getElementById('guest-ticket-qty').value;
+  const phone = document.getElementById('guest-phone').value.trim();
+  const notes = document.getElementById('guest-notes').value.trim();
+
+  const url = id ? `/api/invitations/guest/${id}` : '/api/invitations/guest';
+  const method = id ? 'PUT' : 'POST';
+
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, institution, session, ticket_qty, phone, notes })
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || json.message);
+
+    showToast(json.message, 'success');
+    closeGuestModal();
+    loadInvitations();
+    if (typeof loadCapacityRecap === 'function') loadCapacityRecap();
+  } catch (err) {
+    alert('Gagal menyimpan tamu undangan: ' + err.message);
+  }
+}
+
+async function deleteGuest(id, name) {
+  if (!confirm(`Hapus tamu undangan "${name}" dari sistem?`)) return;
+
+  try {
+    const res = await fetch(`/api/invitations/guest/${id}`, { method: 'DELETE' });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || json.message);
+
+    showToast(json.message, 'info');
+    loadInvitations();
+    if (typeof loadCapacityRecap === 'function') loadCapacityRecap();
+  } catch (err) {
+    alert('Gagal menghapus tamu: ' + err.message);
+  }
+}
+
+async function toggleInvitationCheckin(id) {
+  try {
+    const res = await fetch(`/api/invitations/${id}/checkin`, { method: 'POST' });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || json.message);
+
+    showToast(json.message, 'success');
+    loadInvitations();
+  } catch (err) {
+    alert('Gagal memperbarui check-in: ' + err.message);
+  }
+}
+
+// ==========================================
+// REKAP TOTAL KURSI & KAPASITAS AUDITORIUM
+// ==========================================
+async function loadCapacityRecap() {
+  try {
+    const res = await fetch('/api/recap/capacity');
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || 'Gagal memuat rekap kapasitas');
+
+    const d = json.data;
+    const s1 = d.session_1;
+    const s2 = d.session_2;
+    const gt = d.grand_total;
+
+    // Fill capacity input fields
+    const inS1 = document.getElementById('input-cap-s1');
+    const inS2 = document.getElementById('input-cap-s2');
+    if (inS1 && (!inS1.value || inS1.value === '')) inS1.value = d.capacity_settings.session_1;
+    if (inS2 && (!inS2.value || inS2.value === '')) inS2.value = d.capacity_settings.session_2;
+
+    // Sesi 1 Card
+    const s1Cap = document.getElementById('cap-card-s1-capacity');
+    if (s1Cap) s1Cap.textContent = `${s1.capacity} Kursi`;
+
+    const s1Rem = document.getElementById('cap-card-s1-remaining');
+    if (s1Rem) {
+      s1Rem.innerHTML = `<span>${s1.remaining_seats}</span> <span class="text-sm font-semibold text-slate-500">kursi tersisa</span>`;
+      if (s1.remaining_seats <= 0) {
+        s1Rem.className = 'text-3xl font-black text-red-600 mt-1 flex items-baseline gap-1';
+      } else if (s1.remaining_seats < 30) {
+        s1Rem.className = 'text-3xl font-black text-amber-600 mt-1 flex items-baseline gap-1';
+      } else {
+        s1Rem.className = 'text-3xl font-black text-emerald-600 mt-1 flex items-baseline gap-1';
+      }
+    }
+
+    const s1Badge = document.getElementById('cap-card-s1-occupancy-badge');
+    if (s1Badge) {
+      s1Badge.textContent = `Okupansi ${s1.occupancy_rate}%`;
+      s1Badge.className = s1.occupancy_rate >= 100
+        ? 'px-3 py-1 text-xs font-black rounded-full bg-red-100 text-red-800'
+        : (s1.occupancy_rate >= 80 ? 'px-3 py-1 text-xs font-black rounded-full bg-amber-100 text-amber-800' : 'px-3 py-1 text-xs font-black rounded-full bg-blue-100 text-blue-800');
+    }
+
+    const s1OccText = document.getElementById('cap-card-s1-occupied-text');
+    if (s1OccText) s1OccText.textContent = `${s1.total_occupied} / ${s1.capacity} terisi`;
+
+    const s1Bar = document.getElementById('cap-card-s1-progress-bar');
+    if (s1Bar) s1Bar.style.width = `${Math.min(100, s1.occupancy_rate)}%`;
+
+    const s1Pct = document.getElementById('cap-card-s1-progress-pct');
+    if (s1Pct) s1Pct.textContent = `${s1.occupancy_rate}%`;
+
+    const s1Parents = document.getElementById('cap-card-s1-parents');
+    if (s1Parents) s1Parents.textContent = `${s1.parents.tickets} Tiket (${s1.parents.count} Siswa)`;
+
+    const s1Guests = document.getElementById('cap-card-s1-guests');
+    if (s1Guests) s1Guests.textContent = `${s1.guests.tickets} Tiket (${s1.guests.count} Tamu)`;
+
+    const s1BuyersV = document.getElementById('cap-card-s1-buyers-verified');
+    if (s1BuyersV) s1BuyersV.textContent = `${s1.buyers_verified.tickets} Tiket (${s1.buyers_verified.count} Pesanan)`;
+
+    const s1TotalOcc = document.getElementById('cap-card-s1-total-occupied');
+    if (s1TotalOcc) s1TotalOcc.textContent = `${s1.total_occupied} Tiket`;
+
+    const s1BuyersP = document.getElementById('cap-card-s1-buyers-pending');
+    if (s1BuyersP) s1BuyersP.textContent = `${s1.buyers_pending.tickets} Tiket (${s1.buyers_pending.count} Pesanan)`;
+
+    // Sesi 2 Card
+    const s2Cap = document.getElementById('cap-card-s2-capacity');
+    if (s2Cap) s2Cap.textContent = `${s2.capacity} Kursi`;
+
+    const s2Rem = document.getElementById('cap-card-s2-remaining');
+    if (s2Rem) {
+      s2Rem.innerHTML = `<span>${s2.remaining_seats}</span> <span class="text-sm font-semibold text-slate-500">kursi tersisa</span>`;
+      if (s2.remaining_seats <= 0) {
+        s2Rem.className = 'text-3xl font-black text-red-600 mt-1 flex items-baseline gap-1';
+      } else if (s2.remaining_seats < 30) {
+        s2Rem.className = 'text-3xl font-black text-amber-600 mt-1 flex items-baseline gap-1';
+      } else {
+        s2Rem.className = 'text-3xl font-black text-emerald-600 mt-1 flex items-baseline gap-1';
+      }
+    }
+
+    const s2Badge = document.getElementById('cap-card-s2-occupancy-badge');
+    if (s2Badge) {
+      s2Badge.textContent = `Okupansi ${s2.occupancy_rate}%`;
+      s2Badge.className = s2.occupancy_rate >= 100
+        ? 'px-3 py-1 text-xs font-black rounded-full bg-red-100 text-red-800'
+        : (s2.occupancy_rate >= 80 ? 'px-3 py-1 text-xs font-black rounded-full bg-amber-100 text-amber-800' : 'px-3 py-1 text-xs font-black rounded-full bg-purple-100 text-purple-800');
+    }
+
+    const s2OccText = document.getElementById('cap-card-s2-occupied-text');
+    if (s2OccText) s2OccText.textContent = `${s2.total_occupied} / ${s2.capacity} terisi`;
+
+    const s2Bar = document.getElementById('cap-card-s2-progress-bar');
+    if (s2Bar) s2Bar.style.width = `${Math.min(100, s2.occupancy_rate)}%`;
+
+    const s2Pct = document.getElementById('cap-card-s2-progress-pct');
+    if (s2Pct) s2Pct.textContent = `${s2.occupancy_rate}%`;
+
+    const s2Parents = document.getElementById('cap-card-s2-parents');
+    if (s2Parents) s2Parents.textContent = `${s2.parents.tickets} Tiket (${s2.parents.count} Siswa)`;
+
+    const s2Guests = document.getElementById('cap-card-s2-guests');
+    if (s2Guests) s2Guests.textContent = `${s2.guests.tickets} Tiket (${s2.guests.count} Tamu)`;
+
+    const s2BuyersV = document.getElementById('cap-card-s2-buyers-verified');
+    if (s2BuyersV) s2BuyersV.textContent = `${s2.buyers_verified.tickets} Tiket (${s2.buyers_verified.count} Pesanan)`;
+
+    const s2TotalOcc = document.getElementById('cap-card-s2-total-occupied');
+    if (s2TotalOcc) s2TotalOcc.textContent = `${s2.total_occupied} Tiket`;
+
+    const s2BuyersP = document.getElementById('cap-card-s2-buyers-pending');
+    if (s2BuyersP) s2BuyersP.textContent = `${s2.buyers_pending.tickets} Tiket (${s2.buyers_pending.count} Pesanan)`;
+
+    // Master Matrix Table
+    const grandSum = document.getElementById('cap-matrix-grand-summary');
+    if (grandSum) grandSum.textContent = `Total Kapasitas: ${gt.capacity} Kursi (${gt.total_occupied} Terisi, Sisa ${gt.remaining_seats})`;
+
+    const mParentsS1 = document.getElementById('matrix-parents-s1');
+    if (mParentsS1) mParentsS1.textContent = `${s1.parents.tickets} Tiket`;
+    const mParentsS2 = document.getElementById('matrix-parents-s2');
+    if (mParentsS2) mParentsS2.textContent = `${s2.parents.tickets} Tiket`;
+    const mParentsTot = document.getElementById('matrix-parents-total');
+    if (mParentsTot) mParentsTot.textContent = `${gt.parents_tickets} Tiket`;
+
+    const mGuestsS1 = document.getElementById('matrix-guests-s1');
+    if (mGuestsS1) mGuestsS1.textContent = `${s1.guests.tickets} Tiket`;
+    const mGuestsS2 = document.getElementById('matrix-guests-s2');
+    if (mGuestsS2) mGuestsS2.textContent = `${s2.guests.tickets} Tiket`;
+    const mGuestsTot = document.getElementById('matrix-guests-total');
+    if (mGuestsTot) mGuestsTot.textContent = `${gt.guests_tickets} Tiket`;
+
+    const mBuyersS1 = document.getElementById('matrix-buyers-s1');
+    if (mBuyersS1) mBuyersS1.textContent = `${s1.buyers_verified.tickets} Tiket`;
+    const mBuyersS2 = document.getElementById('matrix-buyers-s2');
+    if (mBuyersS2) mBuyersS2.textContent = `${s2.buyers_verified.tickets} Tiket`;
+    const mBuyersTot = document.getElementById('matrix-buyers-total');
+    if (mBuyersTot) mBuyersTot.textContent = `${gt.buyers_verified_tickets} Tiket`;
+
+    const mOccS1 = document.getElementById('matrix-occupied-s1');
+    if (mOccS1) mOccS1.textContent = `${s1.total_occupied} Tiket`;
+    const mOccS2 = document.getElementById('matrix-occupied-s2');
+    if (mOccS2) mOccS2.textContent = `${s2.total_occupied} Tiket`;
+    const mOccTot = document.getElementById('matrix-occupied-total');
+    if (mOccTot) mOccTot.textContent = `${gt.total_occupied} Tiket`;
+    const mOccPct = document.getElementById('matrix-occupied-pct');
+    if (mOccPct) mOccPct.textContent = `Okupansi ${gt.occupancy_rate}%`;
+
+    const mPendS1 = document.getElementById('matrix-pending-s1');
+    if (mPendS1) mPendS1.textContent = `${s1.buyers_pending.tickets} Tiket`;
+    const mPendS2 = document.getElementById('matrix-pending-s2');
+    if (mPendS2) mPendS2.textContent = `${s2.buyers_pending.tickets} Tiket`;
+    const mPendTot = document.getElementById('matrix-pending-total');
+    if (mPendTot) mPendTot.textContent = `${gt.buyers_pending_tickets} Tiket`;
+
+    const mCapS1 = document.getElementById('matrix-capacity-s1');
+    if (mCapS1) mCapS1.textContent = `${s1.capacity} Kursi`;
+    const mCapS2 = document.getElementById('matrix-capacity-s2');
+    if (mCapS2) mCapS2.textContent = `${s2.capacity} Kursi`;
+    const mCapTot = document.getElementById('matrix-capacity-total');
+    if (mCapTot) mCapTot.textContent = `${gt.capacity} Kursi`;
+
+    const mRemS1 = document.getElementById('matrix-remaining-s1');
+    if (mRemS1) mRemS1.textContent = `${s1.remaining_seats} Kursi`;
+    const mRemS2 = document.getElementById('matrix-remaining-s2');
+    if (mRemS2) mRemS2.textContent = `${s2.remaining_seats} Kursi`;
+    const mRemTot = document.getElementById('matrix-remaining-total');
+    if (mRemTot) mRemTot.textContent = `${gt.remaining_seats} Kursi`;
+
+    if (window.lucide) lucide.createIcons();
+  } catch (err) {
+    console.error('Error loading capacity recap:', err);
+  }
+}
+
+async function handleSaveCapacity(e) {
+  e.preventDefault();
+  const capS1 = document.getElementById('input-cap-s1').value;
+  const capS2 = document.getElementById('input-cap-s2').value;
+
+  try {
+    const res = await fetch('/api/settings/capacity', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        capacity_session_1: capS1,
+        capacity_session_2: capS2
+      })
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || json.message);
+
+    showToast(json.message || 'Kapasitas auditorium berhasil diperbarui!', 'success');
+    loadCapacityRecap();
+  } catch (err) {
+    alert('Gagal menyimpan kapasitas: ' + err.message);
   }
 }
 

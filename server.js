@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const QRCode = require('qrcode');
 const multer = require('multer');
-const { db, initDatabase, getSettings, updateSetting } = require('./database');
+const { db, initDatabase, getSettings, updateSetting, persistInvitationsToFile } = require('./database');
 const {
   formatIndonesianPhone,
   formatRupiah,
@@ -181,6 +181,469 @@ app.get('/api/recap/sessions/export-csv', (req, res) => {
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="rekap-sesi-pertunjukan.csv"');
+    res.send(csvContent);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================================
+// REKAP TOTAL KURSI & KAPASITAS AUDITORIUM
+// ==========================================
+app.get('/api/recap/capacity', (req, res) => {
+  try {
+    const settings = getSettings();
+    const cap1 = parseInt(settings.capacity_session_1, 10) || 350;
+    const cap2 = parseInt(settings.capacity_session_2, 10) || 350;
+
+    // 1. Orang Tua Siswa
+    const parentS1Count = db.prepare("SELECT COUNT(*) as c FROM invitations WHERE type = 'parent' AND session = 'Sesi 1'").get().c;
+    const parentS1Tickets = db.prepare("SELECT COALESCE(SUM(ticket_qty), 0) as s FROM invitations WHERE type = 'parent' AND session = 'Sesi 1'").get().s;
+
+    const parentS2Count = db.prepare("SELECT COUNT(*) as c FROM invitations WHERE type = 'parent' AND session = 'Sesi 2'").get().c;
+    const parentS2Tickets = db.prepare("SELECT COALESCE(SUM(ticket_qty), 0) as s FROM invitations WHERE type = 'parent' AND session = 'Sesi 2'").get().s;
+
+    // 2. Tamu Undangan
+    const guestS1Count = db.prepare("SELECT COUNT(*) as c FROM invitations WHERE type = 'guest' AND session = 'Sesi 1'").get().c;
+    const guestS1Tickets = db.prepare("SELECT COALESCE(SUM(ticket_qty), 0) as s FROM invitations WHERE type = 'guest' AND session = 'Sesi 1'").get().s;
+
+    const guestS2Count = db.prepare("SELECT COUNT(*) as c FROM invitations WHERE type = 'guest' AND session = 'Sesi 2'").get().c;
+    const guestS2Tickets = db.prepare("SELECT COALESCE(SUM(ticket_qty), 0) as s FROM invitations WHERE type = 'guest' AND session = 'Sesi 2'").get().s;
+
+    // 3. Pembeli Berbayar (Orders)
+    const allOrders = db.prepare('SELECT id, status, ticket_qty, performance_session, ticket_category FROM orders').all();
+    
+    let buyerVerifiedS1Count = 0, buyerVerifiedS1Tickets = 0;
+    let buyerPendingS1Count = 0, buyerPendingS1Tickets = 0;
+    let buyerVerifiedS2Count = 0, buyerVerifiedS2Tickets = 0;
+    let buyerPendingS2Count = 0, buyerPendingS2Tickets = 0;
+
+    for (const ord of allOrders) {
+      const sessStr = ((ord.performance_session || '') + ' ' + (ord.ticket_category || '')).toLowerCase();
+      const isSesi2 = sessStr.includes('2') || sessStr.includes('sesi 2') || sessStr.includes('session 2');
+      const qty = ord.ticket_qty || 1;
+
+      if (isSesi2) {
+        if (ord.status === 'verified') {
+          buyerVerifiedS2Count++;
+          buyerVerifiedS2Tickets += qty;
+        } else if (ord.status === 'pending') {
+          buyerPendingS2Count++;
+          buyerPendingS2Tickets += qty;
+        }
+      } else {
+        if (ord.status === 'verified') {
+          buyerVerifiedS1Count++;
+          buyerVerifiedS1Tickets += qty;
+        } else if (ord.status === 'pending') {
+          buyerPendingS1Count++;
+          buyerPendingS1Tickets += qty;
+        }
+      }
+    }
+
+    // Calculations Sesi 1
+    const terisiFix1 = parentS1Tickets + guestS1Tickets + buyerVerifiedS1Tickets;
+    const sisaKursi1 = Math.max(0, cap1 - terisiFix1);
+    const okupansiPct1 = cap1 > 0 ? Number(((terisiFix1 / cap1) * 100).toFixed(1)) : 0;
+    const potensiTerisi1 = terisiFix1 + buyerPendingS1Tickets;
+    const sisaPotensial1 = Math.max(0, cap1 - potensiTerisi1);
+
+    // Calculations Sesi 2
+    const terisiFix2 = parentS2Tickets + guestS2Tickets + buyerVerifiedS2Tickets;
+    const sisaKursi2 = Math.max(0, cap2 - terisiFix2);
+    const okupansiPct2 = cap2 > 0 ? Number(((terisiFix2 / cap2) * 100).toFixed(1)) : 0;
+    const potensiTerisi2 = terisiFix2 + buyerPendingS2Tickets;
+    const sisaPotensial2 = Math.max(0, cap2 - potensiTerisi2);
+
+    // Grand Totals
+    const capTotal = cap1 + cap2;
+    const terisiTotal = terisiFix1 + terisiFix2;
+    const sisaTotal = Math.max(0, capTotal - terisiTotal);
+    const okupansiTotal = capTotal > 0 ? Number(((terisiTotal / capTotal) * 100).toFixed(1)) : 0;
+
+    res.json({
+      success: true,
+      data: {
+        capacity_settings: {
+          session_1: cap1,
+          session_2: cap2,
+          total: capTotal
+        },
+        session_1: {
+          capacity: cap1,
+          parents: { count: parentS1Count, tickets: parentS1Tickets },
+          guests: { count: guestS1Count, tickets: guestS1Tickets },
+          buyers_verified: { count: buyerVerifiedS1Count, tickets: buyerVerifiedS1Tickets },
+          buyers_pending: { count: buyerPendingS1Count, tickets: buyerPendingS1Tickets },
+          total_occupied: terisiFix1,
+          remaining_seats: sisaKursi1,
+          occupancy_rate: okupansiPct1,
+          potential_occupied: potensiTerisi1,
+          potential_remaining: sisaPotensial1
+        },
+        session_2: {
+          capacity: cap2,
+          parents: { count: parentS2Count, tickets: parentS2Tickets },
+          guests: { count: guestS2Count, tickets: guestS2Tickets },
+          buyers_verified: { count: buyerVerifiedS2Count, tickets: buyerVerifiedS2Tickets },
+          buyers_pending: { count: buyerPendingS2Count, tickets: buyerPendingS2Tickets },
+          total_occupied: terisiFix2,
+          remaining_seats: sisaKursi2,
+          occupancy_rate: okupansiPct2,
+          potential_occupied: potensiTerisi2,
+          potential_remaining: sisaPotensial2
+        },
+        grand_total: {
+          capacity: capTotal,
+          parents_tickets: parentS1Tickets + parentS2Tickets,
+          guests_tickets: guestS1Tickets + guestS2Tickets,
+          buyers_verified_tickets: buyerVerifiedS1Tickets + buyerVerifiedS2Tickets,
+          buyers_pending_tickets: buyerPendingS1Tickets + buyerPendingS2Tickets,
+          total_occupied: terisiTotal,
+          remaining_seats: sisaTotal,
+          occupancy_rate: okupansiTotal
+        }
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Update Kapasitas Kursi
+app.post('/api/settings/capacity', (req, res) => {
+  try {
+    const { capacity_session_1, capacity_session_2 } = req.body;
+    if (capacity_session_1 !== undefined) {
+      updateSetting('capacity_session_1', Math.max(0, parseInt(capacity_session_1, 10) || 0));
+    }
+    if (capacity_session_2 !== undefined) {
+      updateSetting('capacity_session_2', Math.max(0, parseInt(capacity_session_2, 10) || 0));
+    }
+    const settings = getSettings();
+    res.json({
+      success: true,
+      message: 'Kapasitas kursi berhasil diperbarui!',
+      data: {
+        capacity_session_1: settings.capacity_session_1,
+        capacity_session_2: settings.capacity_session_2
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================================
+// ORANG TUA SISWA & TAMU UNDANGAN
+// ==========================================
+
+// List Invitations with filters and counters
+app.get('/api/invitations', (req, res) => {
+  try {
+    const { search, class_grade, session, type, is_swapped, checked_in } = req.query;
+    
+    let query = 'SELECT * FROM invitations WHERE 1=1';
+    const params = [];
+
+    if (search && search.trim()) {
+      const q = `%${search.trim()}%`;
+      query += ' AND (name LIKE ? OR invitation_code LIKE ? OR phone LIKE ? OR institution LIKE ? OR swap_notes LIKE ?)';
+      params.push(q, q, q, q, q);
+    }
+
+    if (type && type !== 'all') {
+      query += ' AND type = ?';
+      params.push(type);
+    }
+
+    if (class_grade && class_grade !== 'all') {
+      if (class_grade === 'guest') {
+        query += " AND type = 'guest'";
+      } else {
+        query += ' AND class_grade = ?';
+        params.push(class_grade);
+      }
+    }
+
+    if (session && session !== 'all') {
+      query += ' AND session = ?';
+      params.push(session);
+    }
+
+    if (is_swapped !== undefined && is_swapped !== '' && is_swapped !== 'all') {
+      query += ' AND is_swapped = ?';
+      params.push(parseInt(is_swapped, 10));
+    }
+
+    if (checked_in !== undefined && checked_in !== '' && checked_in !== 'all') {
+      query += ' AND checked_in = ?';
+      params.push(parseInt(checked_in, 10));
+    }
+
+    query += ' ORDER BY class_grade ASC, invitation_code ASC';
+
+    const rows = db.prepare(query).all(...params);
+
+    // Compute summary stats
+    const totalParents = db.prepare("SELECT COUNT(*) as count FROM invitations WHERE type = 'parent'").get().count;
+    const totalGuests = db.prepare("SELECT COUNT(*) as count FROM invitations WHERE type = 'guest'").get().count;
+
+    const parentTicketsS1 = db.prepare("SELECT COALESCE(SUM(ticket_qty), 0) as count FROM invitations WHERE type = 'parent' AND session = 'Sesi 1'").get().count;
+    const parentTicketsS2 = db.prepare("SELECT COALESCE(SUM(ticket_qty), 0) as count FROM invitations WHERE type = 'parent' AND session = 'Sesi 2'").get().count;
+
+    const guestTicketsS1 = db.prepare("SELECT COALESCE(SUM(ticket_qty), 0) as count FROM invitations WHERE type = 'guest' AND session = 'Sesi 1'").get().count;
+    const guestTicketsS2 = db.prepare("SELECT COALESCE(SUM(ticket_qty), 0) as count FROM invitations WHERE type = 'guest' AND session = 'Sesi 2'").get().count;
+
+    const totalSwapped = db.prepare("SELECT COUNT(*) as count FROM invitations WHERE is_swapped = 1").get().count;
+    const totalCheckedIn = db.prepare("SELECT COUNT(*) as count FROM invitations WHERE checked_in = 1").get().count;
+    const totalCheckedInTickets = db.prepare("SELECT COALESCE(SUM(ticket_qty), 0) as count FROM invitations WHERE checked_in = 1").get().count;
+
+    res.json({
+      success: true,
+      data: rows,
+      meta: {
+        totalRows: rows.length,
+        totalParents,
+        totalGuests,
+        parentTicketsS1,
+        parentTicketsS2,
+        guestTicketsS1,
+        guestTicketsS2,
+        totalSwapped,
+        totalCheckedIn,
+        totalCheckedInTickets
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Update Sesi & Jumlah Tiket (Orang Tua / Undangan)
+app.post('/api/invitations/:id/update-session', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { session, ticket_qty, swap_notes, phone } = req.body;
+
+    const item = db.prepare('SELECT * FROM invitations WHERE id = ? OR invitation_code = ?').get(id, id);
+    if (!item) {
+      return res.status(404).json({ success: false, message: 'Data orang tua / tamu tidak ditemukan' });
+    }
+
+    const newSession = session || item.session;
+    const newQty = ticket_qty !== undefined ? Math.max(0, parseInt(ticket_qty, 10)) : item.ticket_qty;
+    const newNotes = swap_notes !== undefined ? String(swap_notes).trim() : item.swap_notes;
+    const newPhone = phone !== undefined ? String(phone).trim() : item.phone;
+
+    // is_swapped is 1 if session changed from original OR ticket_qty changed from original (2 for parents)
+    const isSwapped = (newSession !== item.original_session || newQty !== 2 || Boolean(newNotes)) ? 1 : 0;
+
+    db.prepare(`
+      UPDATE invitations
+      SET session = ?, ticket_qty = ?, swap_notes = ?, phone = ?, is_swapped = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(newSession, newQty, newNotes, newPhone, isSwapped, item.id);
+
+    persistInvitationsToFile();
+
+    const updated = db.prepare('SELECT * FROM invitations WHERE id = ?').get(item.id);
+    res.json({
+      success: true,
+      message: `Data ${updated.name} (${updated.invitation_code}) berhasil diperbarui`,
+      data: updated
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Reset Sesi & Tiket ke Bawaan
+app.post('/api/invitations/:id/reset-session', (req, res) => {
+  try {
+    const { id } = req.params;
+    const item = db.prepare('SELECT * FROM invitations WHERE id = ? OR invitation_code = ?').get(id, id);
+    if (!item) {
+      return res.status(404).json({ success: false, message: 'Data tidak ditemukan' });
+    }
+
+    db.prepare(`
+      UPDATE invitations
+      SET session = original_session, ticket_qty = 2, is_swapped = 0, swap_notes = '', updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(item.id);
+
+    persistInvitationsToFile();
+
+    const updated = db.prepare('SELECT * FROM invitations WHERE id = ?').get(item.id);
+    res.json({
+      success: true,
+      message: `Alokasi sesi untuk ${updated.name} berhasil direset ke bawaan (${updated.session}, 2 tiket)`,
+      data: updated
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Tambah Tamu Undangan Baru
+app.post('/api/invitations/guest', (req, res) => {
+  try {
+    const { name, institution, session, ticket_qty, phone, notes } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).json({ success: false, message: 'Nama tamu undangan wajib diisi' });
+    }
+
+    // Find next available code
+    const guests = db.prepare("SELECT invitation_code FROM invitations WHERE type = 'guest'").all();
+    let maxNum = 0;
+    for (const g of guests) {
+      const match = g.invitation_code.match(/UND-(\d+)/);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (num > maxNum) maxNum = num;
+      }
+    }
+    const code = `UND-${String(maxNum + 1).padStart(2, '0')}`;
+    const selectedSession = session || 'Sesi 1';
+    const qty = parseInt(ticket_qty, 10) || 2;
+
+    db.prepare(`
+      INSERT INTO invitations (
+        invitation_code, type, name, class_grade, session, original_session,
+        ticket_qty, is_swapped, swap_notes, institution, phone
+      ) VALUES (?, 'guest', ?, NULL, ?, ?, ?, 0, ?, ?, ?)
+    `).run(
+      code, name.trim(), selectedSession, selectedSession, qty,
+      notes || '', institution || '', phone || ''
+    );
+
+    persistInvitationsToFile();
+
+    const created = db.prepare('SELECT * FROM invitations WHERE invitation_code = ?').get(code);
+    res.status(201).json({
+      success: true,
+      message: `Tamu undangan "${created.name}" berhasil ditambahkan (${created.invitation_code})`,
+      data: created
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Update Tamu Undangan
+app.put('/api/invitations/guest/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, institution, session, ticket_qty, phone, notes } = req.body;
+    const guest = db.prepare("SELECT * FROM invitations WHERE (id = ? OR invitation_code = ?) AND type = 'guest'").get(id, id);
+    if (!guest) {
+      return res.status(404).json({ success: false, message: 'Tamu undangan tidak ditemukan' });
+    }
+
+    db.prepare(`
+      UPDATE invitations
+      SET name = COALESCE(NULLIF(?, ''), name),
+          institution = ?,
+          session = COALESCE(NULLIF(?, ''), session),
+          ticket_qty = ?,
+          phone = ?,
+          swap_notes = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      name ? name.trim() : guest.name,
+      institution !== undefined ? institution.trim() : guest.institution,
+      session || guest.session,
+      ticket_qty !== undefined ? parseInt(ticket_qty, 10) : guest.ticket_qty,
+      phone !== undefined ? phone.trim() : guest.phone,
+      notes !== undefined ? notes.trim() : guest.swap_notes,
+      guest.id
+    );
+
+    persistInvitationsToFile();
+    const updated = db.prepare('SELECT * FROM invitations WHERE id = ?').get(guest.id);
+    res.json({ success: true, message: 'Data tamu berhasil diperbarui', data: updated });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Hapus Tamu Undangan
+app.delete('/api/invitations/guest/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const guest = db.prepare("SELECT * FROM invitations WHERE (id = ? OR invitation_code = ?) AND type = 'guest'").get(id, id);
+    if (!guest) {
+      return res.status(404).json({ success: false, message: 'Tamu undangan tidak ditemukan' });
+    }
+
+    db.prepare('DELETE FROM invitations WHERE id = ?').run(guest.id);
+    persistInvitationsToFile();
+
+    res.json({ success: true, message: `Tamu undangan ${guest.name} (${guest.invitation_code}) berhasil dihapus` });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Check-in / Uncheck-in Toggle for Invitations
+app.post('/api/invitations/:id/checkin', (req, res) => {
+  try {
+    const { id } = req.params;
+    const inv = db.prepare('SELECT * FROM invitations WHERE id = ? OR invitation_code = ?').get(id, id);
+    if (!inv) return res.status(404).json({ success: false, message: 'Undangan tidak ditemukan' });
+    const newChecked = inv.checked_in === 1 ? 0 : 1;
+    const checkedAt = newChecked === 1 ? new Date().toISOString() : null;
+    db.prepare('UPDATE invitations SET checked_in = ?, checked_in_at = ? WHERE id = ?').run(newChecked, checkedAt, inv.id);
+    persistInvitationsToFile();
+    const updated = db.prepare('SELECT * FROM invitations WHERE id = ?').get(inv.id);
+    res.json({
+      success: true,
+      message: newChecked === 1 ? `Check-in berhasil untuk ${updated.name}` : `Check-in dibatalkan untuk ${updated.name}`,
+      data: updated
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Export Daftar Orang Tua & Tamu ke CSV
+app.get('/api/invitations/export-csv', (req, res) => {
+  try {
+    const rows = db.prepare('SELECT * FROM invitations ORDER BY class_grade ASC, invitation_code ASC').all();
+    
+    const headers = [
+      'Kode Tiket', 'Kategori', 'Kelas', 'Nama Siswa / Tamu',
+      'Sesi Pertunjukan', 'Sesi Bawaan', 'Jumlah Tiket (Pax)',
+      'Status Tukar Sesi', 'Catatan / Alasan Tukar', 'Instansi / Keterangan',
+      'No Telepon / WA', 'Status Check-in', 'Waktu Masuk (Gate)'
+    ];
+
+    let csvContent = '\uFEFF' + headers.join(',') + '\n';
+
+    for (const r of rows) {
+      const row = [
+        `"${r.invitation_code}"`,
+        r.type === 'parent' ? '"Orang Tua Siswa"' : '"Tamu Undangan"',
+        `"${r.class_grade || '-'}"`,
+        `"${(r.name || '').replace(/"/g, '""')}"`,
+        `"${r.session}"`,
+        `"${r.original_session}"`,
+        r.ticket_qty,
+        r.is_swapped === 1 ? '"BERTUKAR / MODIFIKASI"' : '"SESUAI DEFAULT"',
+        `"${(r.swap_notes || '').replace(/"/g, '""')}"`,
+        `"${(r.institution || '').replace(/"/g, '""')}"`,
+        `"${r.phone || ''}"`,
+        r.checked_in === 1 ? '"SUDAH MASUK"' : '"BELUM"',
+        `"${r.checked_in_at || ''}"`
+      ];
+      csvContent += row.join(',') + '\n';
+    }
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="daftar_orangtua_dan_tamu_undangan.csv"');
     res.send(csvContent);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -594,9 +1057,44 @@ app.post('/api/orders/:id/resend-wa', async (req, res) => {
 app.post('/api/orders/:id/checkin', (req, res) => {
   try {
     const { id } = req.params;
-    const order = db.prepare('SELECT * FROM orders WHERE id = ? OR order_id = ?').get(id, id);
+    let order = db.prepare('SELECT * FROM orders WHERE id = ? OR order_id = ?').get(id, id);
 
     if (!order) {
+      // Check invitations table (parents and guests)
+      const inv = db.prepare('SELECT * FROM invitations WHERE id = ? OR invitation_code = ?').get(id, id);
+      if (inv) {
+        if (inv.checked_in === 1) {
+          return res.status(409).json({
+            success: false,
+            already_checked_in: true,
+            message: `Tiket ${inv.invitation_code} (${inv.name}) SUDAH DIGUNAKAN sebelumnya pada ${inv.checked_in_at}!`,
+            data: {
+              ...inv,
+              order_id: inv.invitation_code,
+              ticket_category: inv.type === 'parent' ? `Orang Tua Siswa (${inv.class_grade})` : 'Tamu Undangan',
+              performance_session: inv.session,
+              status: 'verified'
+            }
+          });
+        }
+
+        db.prepare('UPDATE invitations SET checked_in = 1, checked_in_at = CURRENT_TIMESTAMP WHERE id = ?').run(inv.id);
+        persistInvitationsToFile();
+
+        const updatedInv = db.prepare('SELECT * FROM invitations WHERE id = ?').get(inv.id);
+        return res.json({
+          success: true,
+          message: `Check-in BERHASIL! Selamat datang ${updatedInv.type === 'parent' ? 'Orang Tua dari ' + updatedInv.name : updatedInv.name}.`,
+          data: {
+            ...updatedInv,
+            order_id: updatedInv.invitation_code,
+            ticket_category: updatedInv.type === 'parent' ? `Orang Tua Siswa (${updatedInv.class_grade})` : 'Tamu Undangan',
+            performance_session: updatedInv.session,
+            status: 'verified'
+          }
+        });
+      }
+
       return res.status(404).json({ success: false, message: 'Kode tiket tidak ditemukan!' });
     }
 
@@ -654,9 +1152,24 @@ app.post('/api/orders/:id/checkin', (req, res) => {
 app.post('/api/orders/:id/uncheckin', (req, res) => {
   try {
     const { id } = req.params;
-    const order = db.prepare('SELECT * FROM orders WHERE id = ? OR order_id = ?').get(id, id);
+    let order = db.prepare('SELECT * FROM orders WHERE id = ? OR order_id = ?').get(id, id);
 
     if (!order) {
+      const inv = db.prepare('SELECT * FROM invitations WHERE id = ? OR invitation_code = ?').get(id, id);
+      if (inv) {
+        db.prepare('UPDATE invitations SET checked_in = 0, checked_in_at = NULL WHERE id = ?').run(inv.id);
+        persistInvitationsToFile();
+        const updatedInv = db.prepare('SELECT * FROM invitations WHERE id = ?').get(inv.id);
+        return res.json({
+          success: true,
+          message: `Status check-in ${updatedInv.name} berhasil dibatalkan.`,
+          data: {
+            ...updatedInv,
+            order_id: updatedInv.invitation_code,
+            is_invitation: true
+          }
+        });
+      }
       return res.status(404).json({ success: false, message: 'Kode tiket tidak ditemukan!' });
     }
 
