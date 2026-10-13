@@ -4,8 +4,8 @@
     "name": "Komang Rama",
     "phone": "6281235698093",
     "status": "pending",
-    "checked_in": 0,
-    "checked_in_at": null
+    "checked_in": 1,
+    "checked_in_at": "2026-10-13T00:29:23.818Z"
   },
   "6282198416928_Jacqueline Pattikawa": {
     "order_id": "TIX-4689",
@@ -34,6 +34,30 @@
     "order_id": "TIX-7825",
     "name": "Santosa Pribadi",
     "phone": "628118620064",
+    "status": "pending",
+    "checked_in": 0,
+    "checked_in_at": null
+  },
+  "6285693218959_Jessica Johary": {
+    "order_id": "TIX-5577",
+    "name": "Jessica Johary",
+    "phone": "6285693218959",
+    "status": "pending",
+    "checked_in": 0,
+    "checked_in_at": null
+  },
+  "6281932122208_Rebecca": {
+    "order_id": "TIX-7462",
+    "name": "Rebecca",
+    "phone": "6281932122208",
+    "status": "pending",
+    "checked_in": 0,
+    "checked_in_at": null
+  },
+  "6281311294594_Antonius Ismunamto": {
+    "order_id": "TIX-1427",
+    "name": "Antonius Ismunamto",
+    "phone": "6281311294594",
     "status": "pending",
     "checked_in": 0,
     "checked_in_at": null

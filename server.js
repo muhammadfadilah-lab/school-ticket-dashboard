@@ -4,7 +4,19 @@ const path = require('path');
 const fs = require('fs');
 const QRCode = require('qrcode');
 const multer = require('multer');
-const { db, initDatabase, getSettings, updateSetting, persistInvitationsToFile } = require('./database');
+const {
+  db,
+  initDatabase,
+  getSettings,
+  updateSetting,
+  persistSettingsToFile,
+  persistInvitationsToFile,
+  persistDeletedOrdersToFile,
+  persistParentSwapsToFile,
+  persistCheckinsLogToFile,
+  getVaultState,
+  applyVaultSync
+} = require('./database');
 const {
   formatIndonesianPhone,
   formatRupiah,
@@ -460,6 +472,17 @@ app.post('/api/invitations/:id/update-session', (req, res) => {
       WHERE id = ?
     `).run(newSession, newQty, newNotes, newPhone, isSwapped, item.id);
 
+    if (isSwapped) {
+      db.prepare(`
+        INSERT INTO parent_swaps (invitation_code, session, ticket_qty, swap_notes, phone, is_swapped, updated_at)
+        VALUES (?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+        ON CONFLICT(invitation_code) DO UPDATE SET session=excluded.session, ticket_qty=excluded.ticket_qty, swap_notes=excluded.swap_notes, phone=excluded.phone, is_swapped=1
+      `).run(item.invitation_code, newSession, newQty, newNotes, newPhone);
+    } else {
+      db.prepare('DELETE FROM parent_swaps WHERE invitation_code = ?').run(item.invitation_code);
+    }
+
+    persistParentSwapsToFile();
     persistInvitationsToFile();
 
     const updated = db.prepare('SELECT * FROM invitations WHERE id = ?').get(item.id);
@@ -488,6 +511,8 @@ app.post('/api/invitations/:id/reset-session', (req, res) => {
       WHERE id = ?
     `).run(item.id);
 
+    db.prepare('DELETE FROM parent_swaps WHERE invitation_code = ?').run(item.invitation_code);
+    persistParentSwapsToFile();
     persistInvitationsToFile();
 
     const updated = db.prepare('SELECT * FROM invitations WHERE id = ?').get(item.id);
@@ -611,6 +636,17 @@ app.post('/api/invitations/:id/checkin', (req, res) => {
     const newChecked = inv.checked_in === 1 ? 0 : 1;
     const checkedAt = newChecked === 1 ? new Date().toISOString() : null;
     db.prepare('UPDATE invitations SET checked_in = ?, checked_in_at = ? WHERE id = ?').run(newChecked, checkedAt, inv.id);
+    
+    if (newChecked === 1) {
+      db.prepare(`
+        INSERT INTO checkins_log (code, type, checked_in_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(code) DO UPDATE SET checked_in_at=excluded.checked_in_at
+      `).run(inv.invitation_code, inv.type || 'parent', checkedAt);
+    } else {
+      db.prepare('DELETE FROM checkins_log WHERE code = ?').run(inv.invitation_code);
+    }
+    persistCheckinsLogToFile();
     persistInvitationsToFile();
     const updated = db.prepare('SELECT * FROM invitations WHERE id = ?').get(inv.id);
     res.json({
@@ -698,6 +734,33 @@ app.get('/api/sync/google-sheet', (req, res) => {
   }
 });
 
+// Vault State Sync Endpoints (Auto-Persistence across Render Container Restarts & Multi-Client Sync)
+app.get('/api/sync/vault', (req, res) => {
+  try {
+    const vault = getVaultState();
+    res.json({
+      success: true,
+      data: vault
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/sync/vault', (req, res) => {
+  try {
+    const clientVault = req.body || {};
+    const updatedVault = applyVaultSync(clientVault);
+    res.json({
+      success: true,
+      message: 'Vault tersinkronisasi!',
+      data: updatedVault
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // 2. Orders List with search & filters
 app.get('/api/orders', (req, res) => {
   try {
@@ -755,6 +818,24 @@ app.delete('/api/orders/:id', (req, res) => {
         try { fs.unlinkSync(filePath); } catch (e) { console.error('Gagal hapus file bukti:', e); }
       }
     }
+
+    // Catat ke deleted_orders (tombstone) agar auto-sync Google Sheet tidak memasukkannya kembali
+    db.prepare(`
+      INSERT INTO deleted_orders (order_id, phone, name, deleted_at)
+      VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(order_id) DO NOTHING
+    `).run(order.order_id, order.phone, order.name);
+    persistDeletedOrdersToFile();
+
+    // Hapus dari ordersCache jika ada
+    try {
+      const ordersCache = loadOrdersCache();
+      const cacheKey = `${order.phone}_${order.name.trim()}`;
+      if (ordersCache[cacheKey]) {
+        delete ordersCache[cacheKey];
+        saveOrdersCache(ordersCache);
+      }
+    } catch (e) {}
 
     db.prepare('DELETE FROM orders WHERE id = ?').run(order.id);
 
@@ -1093,6 +1174,12 @@ app.post('/api/orders/:id/checkin', (req, res) => {
         }
 
         db.prepare('UPDATE invitations SET checked_in = 1, checked_in_at = CURRENT_TIMESTAMP WHERE id = ?').run(inv.id);
+        db.prepare(`
+          INSERT INTO checkins_log (code, type, checked_in_at)
+          VALUES (?, ?, CURRENT_TIMESTAMP)
+          ON CONFLICT(code) DO UPDATE SET checked_in_at=CURRENT_TIMESTAMP
+        `).run(inv.invitation_code, inv.type || 'parent');
+        persistCheckinsLogToFile();
         persistInvitationsToFile();
 
         const updatedInv = db.prepare('SELECT * FROM invitations WHERE id = ?').get(inv.id);
@@ -1135,6 +1222,13 @@ app.post('/api/orders/:id/checkin', (req, res) => {
       WHERE id = ?
     `).run(order.id);
 
+    db.prepare(`
+      INSERT INTO checkins_log (code, type, checked_in_at)
+      VALUES (?, 'order', CURRENT_TIMESTAMP)
+      ON CONFLICT(code) DO UPDATE SET checked_in_at=CURRENT_TIMESTAMP
+    `).run(order.order_id);
+    persistCheckinsLogToFile();
+
     const updated = db.prepare('SELECT * FROM orders WHERE id = ?').get(order.id);
 
     // Persist check-in status to orders cache
@@ -1172,6 +1266,8 @@ app.post('/api/orders/:id/uncheckin', (req, res) => {
       const inv = db.prepare('SELECT * FROM invitations WHERE id = ? OR invitation_code = ?').get(id, id);
       if (inv) {
         db.prepare('UPDATE invitations SET checked_in = 0, checked_in_at = NULL WHERE id = ?').run(inv.id);
+        db.prepare('DELETE FROM checkins_log WHERE code = ?').run(inv.invitation_code);
+        persistCheckinsLogToFile();
         persistInvitationsToFile();
         const updatedInv = db.prepare('SELECT * FROM invitations WHERE id = ?').get(inv.id);
         return res.json({
@@ -1192,6 +1288,9 @@ app.post('/api/orders/:id/uncheckin', (req, res) => {
       SET checked_in = 0, checked_in_at = NULL
       WHERE id = ?
     `).run(order.id);
+
+    db.prepare('DELETE FROM checkins_log WHERE code = ?').run(order.order_id);
+    persistCheckinsLogToFile();
 
     const updated = db.prepare('SELECT * FROM orders WHERE id = ?').get(order.id);
 

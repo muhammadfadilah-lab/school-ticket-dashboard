@@ -207,6 +207,25 @@ async function syncFromGoogleSheet(sheetUrlOrId, options = {}) {
 
     // Cek apakah di sheet sudah ada kolom Kode Tiket
     let order_id = data['KODE TIKET (ORDER ID)'] || data['Kode Tiket'] || data['Order ID'] || '';
+    if (!order_id) {
+      if (ordersCache[cacheKey] && ordersCache[cacheKey].order_id) {
+        order_id = ordersCache[cacheKey].order_id;
+      } else {
+        order_id = generateDeterministicOrderId(phone, name);
+      }
+    }
+
+    // CEK APAKAH TRANSAKSI INI PERNAH DIHAPUS (TOMBSTONE DELETED)
+    const isDeleted = db.prepare(`
+      SELECT 1 FROM deleted_orders 
+      WHERE order_id = ? OR (phone = ? AND name = ?)
+    `).get(order_id, phone, name);
+
+    if (isDeleted) {
+      // Lewati transaksi ini! Jangan pernah memasukkan ulang transaksi yang sudah dihapus pengguna!
+      continue;
+    }
+
     let sheetStatus = (data['STATUS VERIFIKASI'] || data['Status'] || '').toLowerCase();
     let status = 'pending';
     if (sheetStatus.includes('lunas') || sheetStatus.includes('verified')) {
@@ -230,6 +249,29 @@ async function syncFromGoogleSheet(sheetUrlOrId, options = {}) {
       if (timestampStr) {
         db.prepare('UPDATE orders SET created_at = ? WHERE id = ?').run(timestampStr, existing.id);
       }
+
+      // Pertahankan status verifikasi & checkin lokal jika ada
+      let finalStatus = existing.status;
+      if (status === 'verified') finalStatus = 'verified';
+      else if (ordersCache[cacheKey] && ordersCache[cacheKey].status === 'verified') finalStatus = 'verified';
+
+      let finalCheckin = existing.checked_in;
+      let finalCheckinAt = existing.checked_in_at;
+      if (ordersCache[cacheKey] && ordersCache[cacheKey].checked_in === 1) {
+        finalCheckin = 1;
+        finalCheckinAt = ordersCache[cacheKey].checked_in_at || existing.checked_in_at || new Date().toISOString();
+      }
+
+      // Cek juga dari checkins_log
+      const checkinRecord = db.prepare('SELECT checked_in_at FROM checkins_log WHERE code = ?').get(existing.order_id);
+      if (checkinRecord) {
+        finalCheckin = 1;
+        finalCheckinAt = checkinRecord.checked_in_at;
+      }
+
+      db.prepare('UPDATE orders SET status = ?, checked_in = ?, checked_in_at = ? WHERE id = ?')
+        .run(finalStatus, finalCheckin, finalCheckinAt, existing.id);
+
       updatedCount++;
 
       // Update cache
@@ -237,20 +279,11 @@ async function syncFromGoogleSheet(sheetUrlOrId, options = {}) {
         order_id: existing.order_id,
         name,
         phone,
-        status: existing.status,
-        checked_in: existing.checked_in,
-        checked_in_at: existing.checked_in_at
+        status: finalStatus,
+        checked_in: finalCheckin,
+        checked_in_at: finalCheckinAt
       };
     } else {
-      // Tentukan Order ID yang stabil & permanen
-      if (!order_id) {
-        if (ordersCache[cacheKey] && ordersCache[cacheKey].order_id) {
-          order_id = ordersCache[cacheKey].order_id;
-        } else {
-          order_id = generateDeterministicOrderId(phone, name);
-        }
-      }
-
       // Pulihkan status verified & check-in dari cache jika database baru di-reset
       let checked_in = 0;
       let checked_in_at = null;
@@ -260,6 +293,13 @@ async function syncFromGoogleSheet(sheetUrlOrId, options = {}) {
           checked_in = 1;
           checked_in_at = ordersCache[cacheKey].checked_in_at;
         }
+      }
+
+      // Check checkins_log table as well
+      const checkinRecord = db.prepare('SELECT checked_in_at FROM checkins_log WHERE code = ?').get(order_id);
+      if (checkinRecord) {
+        checked_in = 1;
+        checked_in_at = checkinRecord.checked_in_at;
       }
 
       let ticket_price = 75000;

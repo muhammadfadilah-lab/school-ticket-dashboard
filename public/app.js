@@ -8,8 +8,149 @@ document.addEventListener('DOMContentLoaded', () => {
   initApp();
 });
 
+// ==========================================
+// CLIENT VAULT & AUTO-PERSISTENCE ENGINE
+// ==========================================
+const Vault = {
+  KEY: 'regina_vault_v2',
+  get() {
+    try {
+      const data = JSON.parse(localStorage.getItem(this.KEY));
+      if (data && typeof data === 'object') {
+        return {
+          deleted_orders: Array.isArray(data.deleted_orders) ? data.deleted_orders : [],
+          parent_swaps: (data.parent_swaps && typeof data.parent_swaps === 'object') ? data.parent_swaps : {},
+          checkins: (data.checkins && typeof data.checkins === 'object') ? data.checkins : {},
+          verified_orders: Array.isArray(data.verified_orders) ? data.verified_orders : []
+        };
+      }
+    } catch (e) {}
+    return { deleted_orders: [], parent_swaps: {}, checkins: {}, verified_orders: [] };
+  },
+  save(vault) {
+    try {
+      localStorage.setItem(this.KEY, JSON.stringify(vault));
+    } catch (e) {}
+  },
+  recordDelete(orderId) {
+    if (!orderId) return;
+    const v = this.get();
+    if (!v.deleted_orders.includes(orderId)) {
+      v.deleted_orders.push(orderId);
+    }
+    delete v.checkins[orderId];
+    v.verified_orders = v.verified_orders.filter(id => id !== orderId);
+    this.save(v);
+    syncVaultWithServer();
+  },
+  recordSwap(code, swapData) {
+    if (!code) return;
+    const v = this.get();
+    v.parent_swaps[code] = {
+      session: swapData.session,
+      ticket_qty: swapData.ticket_qty !== undefined ? swapData.ticket_qty : 2,
+      swap_notes: swapData.swap_notes || '',
+      phone: swapData.phone || '',
+      is_swapped: 1,
+      updated_at: new Date().toISOString()
+    };
+    this.save(v);
+    syncVaultWithServer();
+  },
+  removeSwap(code) {
+    if (!code) return;
+    const v = this.get();
+    delete v.parent_swaps[code];
+    this.save(v);
+    syncVaultWithServer();
+  },
+  recordCheckin(code, type = 'unknown', time = null) {
+    if (!code) return;
+    const v = this.get();
+    v.checkins[code] = {
+      code,
+      type,
+      checked_in_at: time || new Date().toISOString()
+    };
+    this.save(v);
+    syncVaultWithServer();
+  },
+  removeCheckin(code) {
+    if (!code) return;
+    const v = this.get();
+    delete v.checkins[code];
+    this.save(v);
+    syncVaultWithServer();
+  },
+  recordVerify(orderId) {
+    if (!orderId) return;
+    const v = this.get();
+    if (!v.verified_orders.includes(orderId)) {
+      v.verified_orders.push(orderId);
+    }
+    this.save(v);
+    syncVaultWithServer();
+  }
+};
+
+async function syncVaultWithServer() {
+  try {
+    const localVault = Vault.get();
+    const res = await fetch('/api/sync/vault', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(localVault)
+    });
+    const json = await res.json();
+    if (json.success && json.data) {
+      const serverVault = json.data;
+      // Merge server vault with local vault (union)
+      const merged = {
+        deleted_orders: Array.from(new Set([
+          ...localVault.deleted_orders,
+          ...(Array.isArray(serverVault.deleted_orders) ? serverVault.deleted_orders.map(d => typeof d === 'string' ? d : d.order_id) : [])
+        ])),
+        parent_swaps: {
+          ...serverVault.parent_swaps,
+          ...localVault.parent_swaps
+        },
+        checkins: {
+          ...serverVault.checkins,
+          ...localVault.checkins
+        },
+        verified_orders: Array.from(new Set([
+          ...localVault.verified_orders,
+          ...(serverVault.verified_orders || [])
+        ]))
+      };
+      Vault.save(merged);
+      updateVaultBadge(true);
+    }
+  } catch (err) {
+    console.warn('Vault sync ping failed (offline or server sleeping):', err.message);
+    updateVaultBadge(false);
+  }
+}
+
+function updateVaultBadge(isOnline) {
+  const badge = document.getElementById('vault-sync-status-badge');
+  if (badge) {
+    if (isOnline) {
+      badge.innerHTML = `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-200 border border-emerald-500/40"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Auto-Vault Aktif</span>`;
+      badge.title = 'Semua perubahan sesi, check-in, dan transaksi tersimpan aman di database & browser vault.';
+    } else {
+      badge.innerHTML = `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-200 border border-amber-500/40"><span class="w-2 h-2 rounded-full bg-amber-400"></span> Mode Offline</span>`;
+      badge.title = 'Sedang menghubungkan ke server...';
+    }
+  }
+}
+
 async function initApp() {
   if (window.lucide) lucide.createIcons();
+  
+  // 1. Immediately re-hydrate & sync client vault with server on container boot / page open
+  await syncVaultWithServer();
+
   await loadSettings();
   await loadStats();
   await loadOrders();
@@ -33,9 +174,10 @@ async function initApp() {
     }).catch(() => {});
   }
 
-  // Auto refresh stats every 30 seconds
+  // Auto refresh stats and vault sync every 30 seconds
   setInterval(() => {
     loadStats();
+    syncVaultWithServer();
   }, 30000);
 }
 
@@ -229,7 +371,16 @@ async function loadOrders() {
 
     if (!result.success) throw new Error(result.error);
 
-    allOrders = result.data;
+    const deletedList = Vault.get().deleted_orders;
+    const verifiedList = Vault.get().verified_orders;
+
+    allOrders = (result.data || []).filter(o => !deletedList.includes(o.order_id));
+    allOrders.forEach(o => {
+      if (verifiedList.includes(o.order_id)) {
+        o.status = 'verified';
+      }
+    });
+
     document.getElementById('orders-count-text').textContent = allOrders.length;
     renderOrdersTable(allOrders);
 
@@ -454,11 +605,15 @@ async function verifyOrder(id, name) {
 
     showToast(`✓ Pesanan ${name} LUNAS! E-Tiket berhasil diproses`, 'success');
 
-    // Update local cache
+    // Update Vault & local cache
+    const order = allOrders.find(o => o.id == id);
+    const oId = (order && order.order_id) || (result.data && result.data.order && result.data.order.order_id);
+    if (oId) {
+      Vault.recordVerify(oId);
+    }
+
     try {
       const existingOverrides = JSON.parse(localStorage.getItem('school_ticket_orders_state') || '{}');
-      const order = allOrders.find(o => o.id == id);
-      const oId = (order && order.order_id) || (result.data && result.data.order && result.data.order.order_id);
       if (oId) {
         existingOverrides[oId] = { status: 'verified', checked_in: 0, name: name };
         localStorage.setItem('school_ticket_orders_state', JSON.stringify(existingOverrides));
@@ -494,6 +649,9 @@ async function deleteOrder(id, orderId, name) {
     if (!result.success) throw new Error(result.message || 'Gagal menghapus transaksi');
 
     showToast(`Transaksi ${orderId} berhasil dihapus`, 'info');
+
+    // Record delete in Vault so it never reappears on sync or container restart
+    Vault.recordDelete(orderId);
 
     // Remove from local cache
     try {
@@ -1085,7 +1243,9 @@ async function executeCheckin(codeToValidate) {
         </div>
       `;
 
-      // Cache checked-in state locally
+      // Cache checked-in state locally & in Vault
+      Vault.recordCheckin(order.order_id || code, order.is_invitation ? 'parent' : 'order', order.checked_in_at);
+
       try {
         const existingOverrides = JSON.parse(localStorage.getItem('school_ticket_orders_state') || '{}');
         existingOverrides[order.order_id] = {
@@ -1183,7 +1343,9 @@ async function uncheckinOrder(id, orderId) {
     if (!result.success) throw new Error(result.message);
     showToast(`✓ Check-in ${orderId} berhasil dibatalkan!`, 'success');
 
-    // Update local cache
+    // Update Vault & local cache
+    Vault.removeCheckin(orderId);
+
     try {
       const existingOverrides = JSON.parse(localStorage.getItem('school_ticket_orders_state') || '{}');
       if (existingOverrides[orderId]) {
@@ -1210,6 +1372,8 @@ async function quickVerifyAndCheckin(id, orderId) {
     const result = await res.json();
     if (!result.success) throw new Error(result.message);
     showToast(`✓ Tiket ${orderId} telah diverifikasi LUNAS!`, 'success');
+
+    Vault.recordVerify(orderId);
 
     try {
       const existingOverrides = JSON.parse(localStorage.getItem('school_ticket_orders_state') || '{}');
@@ -2122,6 +2286,17 @@ async function loadInvitations() {
     if (!json.success) throw new Error(json.error || 'Gagal memuat data');
 
     allInvitations = json.data || [];
+    const localSwaps = Vault.get().parent_swaps || {};
+    allInvitations.forEach(inv => {
+      if (localSwaps[inv.invitation_code]) {
+        const sw = localSwaps[inv.invitation_code];
+        inv.session = sw.session;
+        if (sw.ticket_qty !== undefined) inv.ticket_qty = sw.ticket_qty;
+        inv.swap_notes = sw.swap_notes || inv.swap_notes;
+        inv.is_swapped = 1;
+      }
+    });
+
     const meta = json.meta || {};
 
     // Update KPI counters
@@ -2349,6 +2524,9 @@ async function handleParentSwapSubmit(e) {
     if (!json.success) throw new Error(json.error || json.message);
 
     showToast(json.message || 'Perubahan sesi berhasil disimpan!', 'success');
+    if (json.data && json.data.invitation_code) {
+      Vault.recordSwap(json.data.invitation_code, json.data);
+    }
     closeParentSwapModal();
     await loadInvitations();
     if (typeof loadCapacityRecap === 'function') await loadCapacityRecap();
@@ -2371,6 +2549,9 @@ async function handleResetInvitationSession() {
     if (!json.success) throw new Error(json.error || json.message);
 
     showToast(json.message, 'info');
+    if (currentEditingInvitation && currentEditingInvitation.invitation_code) {
+      Vault.removeSwap(currentEditingInvitation.invitation_code);
+    }
     closeParentSwapModal();
     await loadInvitations();
     if (typeof loadCapacityRecap === 'function') await loadCapacityRecap();
@@ -2473,6 +2654,14 @@ async function toggleInvitationCheckin(id) {
     const res = await fetch(`/api/invitations/${id}/checkin`, { method: 'POST' });
     const json = await res.json();
     if (!json.success) throw new Error(json.error || json.message);
+
+    if (json.data && json.data.invitation_code) {
+      if (json.data.checked_in === 1) {
+        Vault.recordCheckin(json.data.invitation_code, json.data.type || 'parent', json.data.checked_in_at);
+      } else {
+        Vault.removeCheckin(json.data.invitation_code);
+      }
+    }
 
     showToast(json.message, 'success');
     loadInvitations();

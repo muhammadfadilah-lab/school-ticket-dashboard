@@ -90,6 +90,11 @@
 
       <!-- Action items -->
       <div class="flex items-center space-x-2 sm:space-x-3">
+        <div id="vault-sync-status-badge" class="hidden sm:flex items-center">
+          <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-200 border border-emerald-500/40">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Auto-Vault Aktif
+          </span>
+        </div>
         <button onclick="refreshData()" class="p-2 rounded-lg bg-indigo-800/80 hover:bg-indigo-700 text-indigo-200 hover:text-white transition text-xs font-semibold flex items-center gap-1.5" title="Muat ulang data">
           <i data-lucide="refresh-cw" class="w-4 h-4" id="refresh-icon"></i>
           <span class="hidden sm:inline">Segarkan</span>

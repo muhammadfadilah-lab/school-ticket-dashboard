@@ -102,6 +102,29 @@ function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_invitations_session ON invitations(session);
     CREATE INDEX IF NOT EXISTS idx_invitations_class ON invitations(class_grade);
     CREATE INDEX IF NOT EXISTS idx_invitations_code ON invitations(invitation_code);
+
+    CREATE TABLE IF NOT EXISTS deleted_orders (
+      order_id TEXT PRIMARY KEY,
+      phone TEXT,
+      name TEXT,
+      deleted_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS checkins_log (
+      code TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      checked_in_at DATETIME NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS parent_swaps (
+      invitation_code TEXT PRIMARY KEY,
+      session TEXT NOT NULL,
+      ticket_qty INTEGER NOT NULL DEFAULT 2,
+      swap_notes TEXT,
+      phone TEXT,
+      is_swapped INTEGER NOT NULL DEFAULT 1,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   // Column migration for specific form fields
@@ -315,6 +338,111 @@ function initDatabase() {
       console.log(`Seeded ${seedItems.length} invitations into database`);
     }
   }
+  // 1. Rehydrate deleted orders from config/deleted_orders.json
+  const deletedPath = path.join(__dirname, 'config', 'deleted_orders.json');
+  if (fs.existsSync(deletedPath)) {
+    try {
+      const deletedList = JSON.parse(fs.readFileSync(deletedPath, 'utf8'));
+      if (Array.isArray(deletedList)) {
+        const insDel = db.prepare(`
+          INSERT INTO deleted_orders (order_id, phone, name, deleted_at)
+          VALUES (@order_id, @phone, @name, COALESCE(@deleted_at, CURRENT_TIMESTAMP))
+          ON CONFLICT(order_id) DO NOTHING
+        `);
+        const delOrder = db.prepare('DELETE FROM orders WHERE order_id = ?');
+        for (const item of deletedList) {
+          const row = typeof item === 'string' ? { order_id: item, phone: null, name: null, deleted_at: null } : item;
+          if (row.order_id) {
+            insDel.run(row);
+            delOrder.run(row.order_id);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Error reading config/deleted_orders.json:', e.message);
+    }
+  }
+
+  // 2. Rehydrate parent swaps from config/parent_swaps.json or config/invitations_custom.json
+  const swapsPath = path.join(__dirname, 'config', 'parent_swaps.json');
+  if (fs.existsSync(swapsPath)) {
+    try {
+      const swapsObj = JSON.parse(fs.readFileSync(swapsPath, 'utf8'));
+      const updateSwap = db.prepare(`
+        UPDATE invitations
+        SET session = ?, ticket_qty = ?, swap_notes = ?, phone = ?, is_swapped = 1, updated_at = CURRENT_TIMESTAMP
+        WHERE invitation_code = ?
+      `);
+      const insSwap = db.prepare(`
+        INSERT INTO parent_swaps (invitation_code, session, ticket_qty, swap_notes, phone, is_swapped, updated_at)
+        VALUES (?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+        ON CONFLICT(invitation_code) DO UPDATE SET session=excluded.session, ticket_qty=excluded.ticket_qty, swap_notes=excluded.swap_notes, phone=excluded.phone, is_swapped=1
+      `);
+      for (const [code, sw] of Object.entries(swapsObj)) {
+        updateSwap.run(sw.session, sw.ticket_qty || 2, sw.swap_notes || '', sw.phone || '', code);
+        insSwap.run(code, sw.session, sw.ticket_qty || 2, sw.swap_notes || '', sw.phone || '');
+      }
+    } catch (e) {
+      console.warn('Error reading config/parent_swaps.json:', e.message);
+    }
+  } else {
+    // Check if invitations_custom.json has swapped entries
+    const customPath = path.join(__dirname, 'config', 'invitations_custom.json');
+    if (fs.existsSync(customPath)) {
+      try {
+        const customRows = JSON.parse(fs.readFileSync(customPath, 'utf8'));
+        const updateSwap = db.prepare(`
+          UPDATE invitations
+          SET session = ?, ticket_qty = ?, swap_notes = ?, phone = ?, is_swapped = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE invitation_code = ?
+        `);
+        for (const r of customRows) {
+          if (r.is_swapped || r.session !== r.original_session || (r.ticket_qty !== undefined && r.ticket_qty !== 2)) {
+            updateSwap.run(r.session, r.ticket_qty !== undefined ? r.ticket_qty : 2, r.swap_notes || '', r.phone || '', r.is_swapped ? 1 : 0, r.invitation_code);
+          }
+        }
+      } catch (e) {}
+    }
+  }
+
+  // 3. Rehydrate checkins from config/checkins_log.json
+  const checkinsPath = path.join(__dirname, 'config', 'checkins_log.json');
+  if (fs.existsSync(checkinsPath)) {
+    try {
+      const checkinsObj = JSON.parse(fs.readFileSync(checkinsPath, 'utf8'));
+      const insCheck = db.prepare(`
+        INSERT INTO checkins_log (code, type, checked_in_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(code) DO UPDATE SET checked_in_at=excluded.checked_in_at
+      `);
+      const updInv = db.prepare('UPDATE invitations SET checked_in = 1, checked_in_at = ? WHERE invitation_code = ?');
+      const updOrd = db.prepare('UPDATE orders SET checked_in = 1, checked_in_at = ? WHERE order_id = ?');
+      for (const [code, val] of Object.entries(checkinsObj)) {
+        const time = val.checked_in_at || new Date().toISOString();
+        insCheck.run(code, val.type || 'unknown', time);
+        updInv.run(time, code);
+        updOrd.run(time, code);
+      }
+    } catch (e) {
+      console.warn('Error reading config/checkins_log.json:', e.message);
+    }
+  }
+
+  // 4. Rehydrate order verified & checkin statuses from config/orders_cache.json
+  const cachePath = path.join(__dirname, 'config', 'orders_cache.json');
+  if (fs.existsSync(cachePath)) {
+    try {
+      const cacheObj = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+      const updStatus = db.prepare("UPDATE orders SET status = 'verified' WHERE order_id = ? AND status != 'verified'");
+      const updCheck = db.prepare("UPDATE orders SET checked_in = 1, checked_in_at = COALESCE(checked_in_at, ?) WHERE order_id = ? AND checked_in = 0");
+      for (const entry of Object.values(cacheObj)) {
+        if (entry.order_id) {
+          if (entry.status === 'verified') updStatus.run(entry.order_id);
+          if (entry.checked_in === 1) updCheck.run(entry.checked_in_at || new Date().toISOString(), entry.order_id);
+        }
+      }
+    } catch (e) {}
+  }
 }
 
 // Persist all current invitations to config/invitations_custom.json
@@ -329,6 +457,177 @@ function persistInvitationsToFile() {
   } catch (err) {
     console.warn('Warning writing config/invitations_custom.json:', err.message);
   }
+}
+
+// Persist deleted orders to config/deleted_orders.json
+function persistDeletedOrdersToFile() {
+  try {
+    const rows = db.prepare('SELECT * FROM deleted_orders ORDER BY deleted_at DESC').all();
+    const cfgDir = path.join(__dirname, 'config');
+    if (!fs.existsSync(cfgDir)) {
+      fs.mkdirSync(cfgDir, { recursive: true });
+    }
+    fs.writeFileSync(path.join(cfgDir, 'deleted_orders.json'), JSON.stringify(rows, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('Warning writing config/deleted_orders.json:', err.message);
+  }
+}
+
+// Persist parent swaps to config/parent_swaps.json
+function persistParentSwapsToFile() {
+  try {
+    const rows = db.prepare('SELECT * FROM parent_swaps WHERE is_swapped = 1').all();
+    const map = {};
+    for (const r of rows) {
+      map[r.invitation_code] = {
+        session: r.session,
+        ticket_qty: r.ticket_qty,
+        swap_notes: r.swap_notes,
+        phone: r.phone,
+        is_swapped: r.is_swapped,
+        updated_at: r.updated_at
+      };
+    }
+    const cfgDir = path.join(__dirname, 'config');
+    if (!fs.existsSync(cfgDir)) {
+      fs.mkdirSync(cfgDir, { recursive: true });
+    }
+    fs.writeFileSync(path.join(cfgDir, 'parent_swaps.json'), JSON.stringify(map, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('Warning writing config/parent_swaps.json:', err.message);
+  }
+}
+
+// Persist checkins log to config/checkins_log.json
+function persistCheckinsLogToFile() {
+  try {
+    const rows = db.prepare('SELECT * FROM checkins_log').all();
+    const map = {};
+    for (const r of rows) {
+      map[r.code] = {
+        code: r.code,
+        type: r.type,
+        checked_in_at: r.checked_in_at
+      };
+    }
+    const cfgDir = path.join(__dirname, 'config');
+    if (!fs.existsSync(cfgDir)) {
+      fs.mkdirSync(cfgDir, { recursive: true });
+    }
+    fs.writeFileSync(path.join(cfgDir, 'checkins_log.json'), JSON.stringify(map, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('Warning writing config/checkins_log.json:', err.message);
+  }
+}
+
+// Get Authoritative Server Vault State
+function getVaultState() {
+  const deleted_orders = db.prepare('SELECT order_id, phone, name, deleted_at FROM deleted_orders').all();
+  const parent_swaps = {};
+  const swappedRows = db.prepare('SELECT * FROM invitations WHERE is_swapped = 1').all();
+  for (const r of swappedRows) {
+    parent_swaps[r.invitation_code] = {
+      session: r.session,
+      ticket_qty: r.ticket_qty,
+      swap_notes: r.swap_notes || '',
+      phone: r.phone || '',
+      is_swapped: 1,
+      updated_at: r.updated_at
+    };
+  }
+  const checkins = {};
+  const checkinRows = db.prepare('SELECT * FROM checkins_log').all();
+  for (const c of checkinRows) {
+    checkins[c.code] = {
+      code: c.code,
+      type: c.type,
+      checked_in_at: c.checked_in_at
+    };
+  }
+  const verified_orders = db.prepare("SELECT order_id FROM orders WHERE status = 'verified'").all().map(o => o.order_id);
+
+  return {
+    deleted_orders,
+    parent_swaps,
+    checkins,
+    verified_orders
+  };
+}
+
+// Apply Vault Sync from Client Browser
+function applyVaultSync(vault) {
+  if (!vault || typeof vault !== 'object') return getVaultState();
+
+  // 1. Process Deleted Orders
+  if (Array.isArray(vault.deleted_orders)) {
+    const insDel = db.prepare(`
+      INSERT INTO deleted_orders (order_id, phone, name, deleted_at)
+      VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(order_id) DO NOTHING
+    `);
+    const delOrd = db.prepare('DELETE FROM orders WHERE order_id = ?');
+    for (const item of vault.deleted_orders) {
+      const orderId = typeof item === 'string' ? item : (item && item.order_id);
+      if (orderId) {
+        insDel.run(orderId, (item && item.phone) || null, (item && item.name) || null);
+        delOrd.run(orderId);
+      }
+    }
+    persistDeletedOrdersToFile();
+  }
+
+  // 2. Process Parent Swaps
+  if (vault.parent_swaps && typeof vault.parent_swaps === 'object') {
+    const updInv = db.prepare(`
+      UPDATE invitations
+      SET session = ?, ticket_qty = ?, swap_notes = ?, phone = ?, is_swapped = 1, updated_at = CURRENT_TIMESTAMP
+      WHERE invitation_code = ?
+    `);
+    const insSwap = db.prepare(`
+      INSERT INTO parent_swaps (invitation_code, session, ticket_qty, swap_notes, phone, is_swapped, updated_at)
+      VALUES (?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+      ON CONFLICT(invitation_code) DO UPDATE SET session=excluded.session, ticket_qty=excluded.ticket_qty, swap_notes=excluded.swap_notes, phone=excluded.phone, is_swapped=1
+    `);
+    for (const [code, sw] of Object.entries(vault.parent_swaps)) {
+      if (code && sw && sw.session) {
+        updInv.run(sw.session, sw.ticket_qty || 2, sw.swap_notes || '', sw.phone || '', code);
+        insSwap.run(code, sw.session, sw.ticket_qty || 2, sw.swap_notes || '', sw.phone || '');
+      }
+    }
+    persistParentSwapsToFile();
+    persistInvitationsToFile();
+  }
+
+  // 3. Process Check-ins
+  if (vault.checkins && typeof vault.checkins === 'object') {
+    const insCheck = db.prepare(`
+      INSERT INTO checkins_log (code, type, checked_in_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(code) DO UPDATE SET checked_in_at=excluded.checked_in_at
+    `);
+    const updInv = db.prepare('UPDATE invitations SET checked_in = 1, checked_in_at = ? WHERE invitation_code = ?');
+    const updOrd = db.prepare('UPDATE orders SET checked_in = 1, checked_in_at = ? WHERE order_id = ?');
+    for (const [code, val] of Object.entries(vault.checkins)) {
+      if (code) {
+        const time = (val && val.checked_in_at) || new Date().toISOString();
+        const type = (val && val.type) || 'unknown';
+        insCheck.run(code, type, time);
+        updInv.run(time, code);
+        updOrd.run(time, code);
+      }
+    }
+    persistCheckinsLogToFile();
+  }
+
+  // 4. Process Verified Orders
+  if (Array.isArray(vault.verified_orders)) {
+    const updVer = db.prepare("UPDATE orders SET status = 'verified' WHERE order_id = ? AND status != 'verified'");
+    for (const ordId of vault.verified_orders) {
+      if (ordId) updVer.run(ordId);
+    }
+  }
+
+  return getVaultState();
 }
 
 // Helpers
@@ -360,5 +659,10 @@ module.exports = {
   getSettings,
   updateSetting,
   persistSettingsToFile,
-  persistInvitationsToFile
+  persistInvitationsToFile,
+  persistDeletedOrdersToFile,
+  persistParentSwapsToFile,
+  persistCheckinsLogToFile,
+  getVaultState,
+  applyVaultSync
 };
