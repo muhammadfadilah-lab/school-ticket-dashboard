@@ -176,7 +176,9 @@ async function syncFromGoogleSheet(sheetUrlOrId, options = {}) {
         has_transferred = COALESCE(NULLIF(?, ''), has_transferred),
         performance_session = COALESCE(NULLIF(?, ''), performance_session),
         ticket_category = COALESCE(NULLIF(?, ''), ticket_category),
-        ticket_qty = COALESCE(?, ticket_qty)
+        ticket_qty = ?,
+        ticket_price = ?,
+        total_amount = ?
     WHERE id = ?
   `);
 
@@ -234,18 +236,27 @@ async function syncFromGoogleSheet(sheetUrlOrId, options = {}) {
       status = 'rejected';
     }
 
+    // Hitung harga satuan tiket dan total nominal tagihan (berdasarkan jumlah tiket terbaru)
+    let ticket_price = 75000;
+    if (settings.ticket_prices && (settings.ticket_prices[ticket_category] || settings.ticket_prices['Default'])) {
+      ticket_price = settings.ticket_prices[ticket_category] || settings.ticket_prices['Default'];
+    } else if (settings.ticket_price) {
+      ticket_price = parseInt(settings.ticket_price, 10) || 75000;
+    }
+    const total_amount = ticket_price * ticket_qty;
+
     // Cek apakah order sudah ada di database (berdasarkan order_id atau nama + phone)
     let existing = null;
     if (order_id) {
-      existing = db.prepare('SELECT id, order_id, status, checked_in, checked_in_at, payment_proof_url FROM orders WHERE order_id = ?').get(order_id);
+      existing = db.prepare('SELECT id, order_id, status, ticket_price, checked_in, checked_in_at, payment_proof_url FROM orders WHERE order_id = ?').get(order_id);
     }
     if (!existing) {
-      existing = db.prepare('SELECT id, order_id, status, checked_in, checked_in_at, payment_proof_url FROM orders WHERE phone = ? AND name = ?').get(phone, name);
+      existing = db.prepare('SELECT id, order_id, status, ticket_price, checked_in, checked_in_at, payment_proof_url FROM orders WHERE phone = ? AND name = ?').get(phone, name);
     }
 
     if (existing) {
-      // Update data jika ada bukti pembayaran baru & sinkronkan created_at normal
-      updateProof.run(payment_proof_url, sender_account_name, have_transferred, performance_session, ticket_category, ticket_qty, existing.id);
+      // Update data jika ada bukti pembayaran baru, perubahan jumlah tiket, atau nominal total baru
+      updateProof.run(payment_proof_url, sender_account_name, have_transferred, performance_session, ticket_category, ticket_qty, ticket_price, total_amount, existing.id);
       if (timestampStr) {
         db.prepare('UPDATE orders SET created_at = ? WHERE id = ?').run(timestampStr, existing.id);
       }
@@ -302,11 +313,6 @@ async function syncFromGoogleSheet(sheetUrlOrId, options = {}) {
         checked_in_at = checkinRecord.checked_in_at;
       }
 
-      let ticket_price = 75000;
-      if (settings.ticket_prices && (settings.ticket_prices[ticket_category] || settings.ticket_prices['Default'])) {
-        ticket_price = settings.ticket_prices[ticket_category] || settings.ticket_prices['Default'];
-      }
-      const total_amount = ticket_price * ticket_qty;
       const payment_method = sender_account_name ? `Transfer a.n. ${sender_account_name}` : 'Transfer Bank';
       const notes = sender_account_name ? `Rek. Pengirim: ${sender_account_name} | Trf: ${have_transferred}` : '';
 

@@ -11,6 +11,7 @@ const {
   updateSetting,
   persistSettingsToFile,
   persistInvitationsToFile,
+  persistGuestsToFile,
   persistDeletedOrdersToFile,
   persistParentSwapsToFile,
   persistCheckinsLogToFile,
@@ -559,6 +560,7 @@ app.post('/api/invitations/guest', (req, res) => {
     );
 
     persistInvitationsToFile();
+    persistGuestsToFile();
 
     const created = db.prepare('SELECT * FROM invitations WHERE invitation_code = ?').get(code);
     res.status(201).json({
@@ -602,6 +604,7 @@ app.put('/api/invitations/guest/:id', (req, res) => {
     );
 
     persistInvitationsToFile();
+    persistGuestsToFile();
     const updated = db.prepare('SELECT * FROM invitations WHERE id = ?').get(guest.id);
     res.json({ success: true, message: 'Data tamu berhasil diperbarui', data: updated });
   } catch (err) {
@@ -620,6 +623,7 @@ app.delete('/api/invitations/guest/:id', (req, res) => {
 
     db.prepare('DELETE FROM invitations WHERE id = ?').run(guest.id);
     persistInvitationsToFile();
+    persistGuestsToFile();
 
     res.json({ success: true, message: `Tamu undangan ${guest.name} (${guest.invitation_code}) berhasil dihapus` });
   } catch (err) {
@@ -648,6 +652,9 @@ app.post('/api/invitations/:id/checkin', (req, res) => {
     }
     persistCheckinsLogToFile();
     persistInvitationsToFile();
+    if (inv.type === 'guest') {
+      persistGuestsToFile();
+    }
     const updated = db.prepare('SELECT * FROM invitations WHERE id = ?').get(inv.id);
     res.json({
       success: true,

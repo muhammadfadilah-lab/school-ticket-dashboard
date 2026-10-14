@@ -21,11 +21,13 @@ const Vault = {
           deleted_orders: Array.isArray(data.deleted_orders) ? data.deleted_orders : [],
           parent_swaps: (data.parent_swaps && typeof data.parent_swaps === 'object') ? data.parent_swaps : {},
           checkins: (data.checkins && typeof data.checkins === 'object') ? data.checkins : {},
-          verified_orders: Array.isArray(data.verified_orders) ? data.verified_orders : []
+          verified_orders: Array.isArray(data.verified_orders) ? data.verified_orders : [],
+          guests: (data.guests && typeof data.guests === 'object') ? data.guests : {},
+          deleted_guests: Array.isArray(data.deleted_guests) ? data.deleted_guests : []
         };
       }
     } catch (e) {}
-    return { deleted_orders: [], parent_swaps: {}, checkins: {}, verified_orders: [] };
+    return { deleted_orders: [], parent_swaps: {}, checkins: {}, verified_orders: [], guests: {}, deleted_guests: [] };
   },
   save(vault) {
     try {
@@ -90,6 +92,37 @@ const Vault = {
     }
     this.save(v);
     syncVaultWithServer();
+  },
+  recordGuest(guest) {
+    if (!guest || !guest.invitation_code) return;
+    const v = this.get();
+    v.guests[guest.invitation_code] = {
+      invitation_code: guest.invitation_code,
+      type: 'guest',
+      name: guest.name,
+      institution: guest.institution || '',
+      session: guest.session,
+      original_session: guest.original_session || guest.session,
+      ticket_qty: guest.ticket_qty !== undefined ? guest.ticket_qty : 2,
+      phone: guest.phone || '',
+      swap_notes: guest.swap_notes || '',
+      checked_in: guest.checked_in || 0,
+      checked_in_at: guest.checked_in_at || null
+    };
+    v.deleted_guests = v.deleted_guests.filter(c => c !== guest.invitation_code);
+    this.save(v);
+    syncVaultWithServer();
+  },
+  removeGuest(code) {
+    if (!code) return;
+    const v = this.get();
+    delete v.guests[code];
+    if (!v.deleted_guests.includes(code)) {
+      v.deleted_guests.push(code);
+    }
+    delete v.checkins[code];
+    this.save(v);
+    syncVaultWithServer();
   }
 };
 
@@ -104,6 +137,19 @@ async function syncVaultWithServer() {
     const json = await res.json();
     if (json.success && json.data) {
       const serverVault = json.data;
+      
+      const mergedGuests = {
+        ...(serverVault.guests || {}),
+        ...localVault.guests
+      };
+      const allDeletedGuests = Array.from(new Set([
+        ...localVault.deleted_guests,
+        ...(serverVault.deleted_guests || [])
+      ]));
+      for (const dCode of allDeletedGuests) {
+        delete mergedGuests[dCode];
+      }
+
       // Merge server vault with local vault (union)
       const merged = {
         deleted_orders: Array.from(new Set([
@@ -121,7 +167,9 @@ async function syncVaultWithServer() {
         verified_orders: Array.from(new Set([
           ...localVault.verified_orders,
           ...(serverVault.verified_orders || [])
-        ]))
+        ])),
+        guests: mergedGuests,
+        deleted_guests: allDeletedGuests
       };
       Vault.save(merged);
       updateVaultBadge(true);
@@ -2286,7 +2334,51 @@ async function loadInvitations() {
     if (!json.success) throw new Error(json.error || 'Gagal memuat data');
 
     allInvitations = json.data || [];
-    const localSwaps = Vault.get().parent_swaps || {};
+    const localVault = Vault.get();
+    const localSwaps = localVault.parent_swaps || {};
+    const localGuests = localVault.guests || {};
+    const deletedGuests = localVault.deleted_guests || [];
+
+    // Filter out deleted guests
+    allInvitations = allInvitations.filter(inv => !(inv.type === 'guest' && deletedGuests.includes(inv.invitation_code)));
+
+    // Reconcile/inject guests from Vault if server was restarted or guest added offline
+    for (const [code, g] of Object.entries(localGuests)) {
+      if (deletedGuests.includes(code)) continue;
+      const idx = allInvitations.findIndex(x => x.invitation_code === code);
+      if (idx >= 0) {
+        allInvitations[idx] = { ...allInvitations[idx], ...g };
+      } else {
+        let matchFilter = true;
+        if (session !== 'all' && g.session !== session) matchFilter = false;
+        if (gate === '1' && (!g.checked_in || g.checked_in === 0)) matchFilter = false;
+        if (gate === '0' && g.checked_in === 1) matchFilter = false;
+        if (search) {
+          const s = search.toLowerCase();
+          const matchName = (g.name || '').toLowerCase().includes(s);
+          const matchInst = (g.institution || '').toLowerCase().includes(s);
+          const matchCode = (g.invitation_code || '').toLowerCase().includes(s);
+          if (!matchName && !matchInst && !matchCode) matchFilter = false;
+        }
+        if (matchFilter) {
+          allInvitations.push({
+            id: 'vault-' + code,
+            invitation_code: code,
+            type: 'guest',
+            name: g.name,
+            institution: g.institution || '',
+            session: g.session,
+            original_session: g.original_session || g.session,
+            ticket_qty: g.ticket_qty !== undefined ? g.ticket_qty : 2,
+            phone: g.phone || '',
+            swap_notes: g.swap_notes || '',
+            checked_in: g.checked_in || 0,
+            checked_in_at: g.checked_in_at || null
+          });
+        }
+      }
+    }
+
     allInvitations.forEach(inv => {
       if (localSwaps[inv.invitation_code]) {
         const sw = localSwaps[inv.invitation_code];
@@ -2624,6 +2716,10 @@ async function handleGuestSubmit(e) {
     const json = await res.json();
     if (!json.success) throw new Error(json.error || json.message);
 
+    if (json.data && json.data.invitation_code) {
+      Vault.recordGuest(json.data);
+    }
+
     showToast(json.message, 'success');
     closeGuestModal();
     loadInvitations();
@@ -2636,10 +2732,17 @@ async function handleGuestSubmit(e) {
 async function deleteGuest(id, name) {
   if (!confirm(`Hapus tamu undangan "${name}" dari sistem?`)) return;
 
+  const targetGuest = allInvitations.find(x => String(x.id) === String(id));
+  const guestCode = targetGuest ? targetGuest.invitation_code : null;
+
   try {
     const res = await fetch(`/api/invitations/guest/${id}`, { method: 'DELETE' });
     const json = await res.json();
     if (!json.success) throw new Error(json.error || json.message);
+
+    if (guestCode) {
+      Vault.removeGuest(guestCode);
+    }
 
     showToast(json.message, 'info');
     loadInvitations();
@@ -2660,6 +2763,9 @@ async function toggleInvitationCheckin(id) {
         Vault.recordCheckin(json.data.invitation_code, json.data.type || 'parent', json.data.checked_in_at);
       } else {
         Vault.removeCheckin(json.data.invitation_code);
+      }
+      if (json.data.type === 'guest') {
+        Vault.recordGuest(json.data);
       }
     }
 

@@ -443,6 +443,64 @@ function initDatabase() {
       }
     } catch (e) {}
   }
+
+  // 5. Rehydrate guests (tamu undangan) from config/guests_custom.json
+  const guestsPath = path.join(__dirname, 'config', 'guests_custom.json');
+  if (fs.existsSync(guestsPath)) {
+    try {
+      const guestsObj = JSON.parse(fs.readFileSync(guestsPath, 'utf8'));
+      const insGuest = db.prepare(`
+        INSERT INTO invitations (
+          invitation_code, type, name, class_grade, session, original_session,
+          ticket_qty, is_swapped, swap_notes, institution, phone, checked_in, checked_in_at
+        ) VALUES (
+          @invitation_code, 'guest', @name, NULL, @session, COALESCE(@original_session, @session),
+          COALESCE(@ticket_qty, 2), 0, COALESCE(@swap_notes, ''), COALESCE(@institution, ''),
+          COALESCE(@phone, ''), COALESCE(@checked_in, 0), @checked_in_at
+        )
+        ON CONFLICT(invitation_code) DO UPDATE SET
+          name = excluded.name,
+          session = excluded.session,
+          ticket_qty = excluded.ticket_qty,
+          swap_notes = excluded.swap_notes,
+          institution = excluded.institution,
+          phone = excluded.phone,
+          checked_in = excluded.checked_in,
+          checked_in_at = excluded.checked_in_at
+      `);
+      const guestsList = Array.isArray(guestsObj) ? guestsObj : Object.values(guestsObj);
+      for (const g of guestsList) {
+        if (g && g.invitation_code && g.name) {
+          insGuest.run({
+            invitation_code: g.invitation_code,
+            name: g.name,
+            session: g.session || 'Sesi 1',
+            original_session: g.original_session || g.session || 'Sesi 1',
+            ticket_qty: g.ticket_qty || 2,
+            swap_notes: g.swap_notes || '',
+            institution: g.institution || '',
+            phone: g.phone || '',
+            checked_in: g.checked_in || 0,
+            checked_in_at: g.checked_in_at || null
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('Error reading config/guests_custom.json:', e.message);
+    }
+  }
+
+  // 6. Fix any legacy orders where total_amount doesn't match ticket_qty * ticket_price
+  try {
+    db.prepare(`
+      UPDATE orders
+      SET total_amount = ticket_qty * COALESCE(NULLIF(ticket_price, 0), 75000),
+          ticket_price = COALESCE(NULLIF(ticket_price, 0), 75000)
+      WHERE total_amount != ticket_qty * COALESCE(NULLIF(ticket_price, 0), 75000)
+         OR total_amount IS NULL
+         OR total_amount = 0
+    `).run();
+  } catch (e) {}
 }
 
 // Persist all current invitations to config/invitations_custom.json
@@ -520,6 +578,38 @@ function persistCheckinsLogToFile() {
   }
 }
 
+// Persist guests to config/guests_custom.json
+function persistGuestsToFile() {
+  try {
+    const rows = db.prepare("SELECT * FROM invitations WHERE type = 'guest' ORDER BY id ASC").all();
+    const map = {};
+    for (const r of rows) {
+      map[r.invitation_code] = {
+        invitation_code: r.invitation_code,
+        type: 'guest',
+        name: r.name,
+        institution: r.institution || '',
+        session: r.session,
+        original_session: r.original_session || r.session,
+        ticket_qty: r.ticket_qty,
+        phone: r.phone || '',
+        swap_notes: r.swap_notes || '',
+        checked_in: r.checked_in || 0,
+        checked_in_at: r.checked_in_at || null,
+        created_at: r.created_at,
+        updated_at: r.updated_at
+      };
+    }
+    const cfgDir = path.join(__dirname, 'config');
+    if (!fs.existsSync(cfgDir)) {
+      fs.mkdirSync(cfgDir, { recursive: true });
+    }
+    fs.writeFileSync(path.join(cfgDir, 'guests_custom.json'), JSON.stringify(map, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('Warning writing config/guests_custom.json:', err.message);
+  }
+}
+
 // Get Authoritative Server Vault State
 function getVaultState() {
   const deleted_orders = db.prepare('SELECT order_id, phone, name, deleted_at FROM deleted_orders').all();
@@ -546,11 +636,30 @@ function getVaultState() {
   }
   const verified_orders = db.prepare("SELECT order_id FROM orders WHERE status = 'verified'").all().map(o => o.order_id);
 
+  const guests = {};
+  const guestRows = db.prepare("SELECT * FROM invitations WHERE type = 'guest'").all();
+  for (const g of guestRows) {
+    guests[g.invitation_code] = {
+      invitation_code: g.invitation_code,
+      type: 'guest',
+      name: g.name,
+      institution: g.institution || '',
+      session: g.session,
+      original_session: g.original_session || g.session,
+      ticket_qty: g.ticket_qty,
+      phone: g.phone || '',
+      swap_notes: g.swap_notes || '',
+      checked_in: g.checked_in || 0,
+      checked_in_at: g.checked_in_at || null
+    };
+  }
+
   return {
     deleted_orders,
     parent_swaps,
     checkins,
-    verified_orders
+    verified_orders,
+    guests
   };
 }
 
@@ -627,6 +736,59 @@ function applyVaultSync(vault) {
     }
   }
 
+  // 5. Process Guests (Tamu Undangan)
+  if (vault.guests && typeof vault.guests === 'object') {
+    const insGuest = db.prepare(`
+      INSERT INTO invitations (
+        invitation_code, type, name, class_grade, session, original_session,
+        ticket_qty, is_swapped, swap_notes, institution, phone, checked_in, checked_in_at
+      ) VALUES (
+        @invitation_code, 'guest', @name, NULL, @session, COALESCE(@original_session, @session),
+        COALESCE(@ticket_qty, 2), 0, COALESCE(@swap_notes, ''), COALESCE(@institution, ''),
+        COALESCE(@phone, ''), COALESCE(@checked_in, 0), @checked_in_at
+      )
+      ON CONFLICT(invitation_code) DO UPDATE SET
+        name = excluded.name,
+        session = excluded.session,
+        ticket_qty = excluded.ticket_qty,
+        swap_notes = excluded.swap_notes,
+        institution = excluded.institution,
+        phone = excluded.phone,
+        checked_in = excluded.checked_in,
+        checked_in_at = excluded.checked_in_at,
+        updated_at = CURRENT_TIMESTAMP
+    `);
+    const guestsList = Array.isArray(vault.guests) ? vault.guests : Object.values(vault.guests);
+    for (const g of guestsList) {
+      if (g && g.invitation_code && g.name) {
+        insGuest.run({
+          invitation_code: g.invitation_code,
+          name: g.name,
+          session: g.session || 'Sesi 1',
+          original_session: g.original_session || g.session || 'Sesi 1',
+          ticket_qty: g.ticket_qty || 2,
+          swap_notes: g.swap_notes || '',
+          institution: g.institution || '',
+          phone: g.phone || '',
+          checked_in: g.checked_in || 0,
+          checked_in_at: g.checked_in_at || null
+        });
+      }
+    }
+    persistGuestsToFile();
+    persistInvitationsToFile();
+  }
+
+  // 6. Process Deleted Guests
+  if (Array.isArray(vault.deleted_guests)) {
+    const delG = db.prepare("DELETE FROM invitations WHERE invitation_code = ? AND type = 'guest'");
+    for (const code of vault.deleted_guests) {
+      if (code) delG.run(code);
+    }
+    persistGuestsToFile();
+    persistInvitationsToFile();
+  }
+
   return getVaultState();
 }
 
@@ -660,6 +822,7 @@ module.exports = {
   updateSetting,
   persistSettingsToFile,
   persistInvitationsToFile,
+  persistGuestsToFile,
   persistDeletedOrdersToFile,
   persistParentSwapsToFile,
   persistCheckinsLogToFile,
