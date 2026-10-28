@@ -501,6 +501,17 @@ function initDatabase() {
          OR total_amount = 0
     `).run();
   } catch (e) {}
+
+  // 7. Auto-Rehydrate from VAULT_BACKUP environment variable if provided
+  if (process.env.VAULT_BACKUP) {
+    try {
+      const envVault = JSON.parse(process.env.VAULT_BACKUP);
+      applyVaultSync(envVault);
+      console.log('✓ Restored database state from VAULT_BACKUP environment variable.');
+    } catch (e) {
+      console.warn('Warning: Invalid VAULT_BACKUP environment variable JSON:', e.message);
+    }
+  }
 }
 
 // Persist all current invitations to config/invitations_custom.json
@@ -659,7 +670,8 @@ function getVaultState() {
     parent_swaps,
     checkins,
     verified_orders,
-    guests
+    guests,
+    settings: getSettings()
   };
 }
 
@@ -787,6 +799,15 @@ function applyVaultSync(vault) {
     }
     persistGuestsToFile();
     persistInvitationsToFile();
+  }
+
+  // 7. Process Settings (Capacity, Event Details, etc.)
+  if (vault.settings && typeof vault.settings === 'object') {
+    for (const [key, val] of Object.entries(vault.settings)) {
+      if (val !== undefined && val !== null && val !== '' && !key.startsWith('_')) {
+        updateSetting(key, val);
+      }
+    }
   }
 
   return getVaultState();

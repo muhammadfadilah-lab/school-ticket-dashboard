@@ -23,16 +23,27 @@ const Vault = {
           checkins: (data.checkins && typeof data.checkins === 'object') ? data.checkins : {},
           verified_orders: Array.isArray(data.verified_orders) ? data.verified_orders : [],
           guests: (data.guests && typeof data.guests === 'object') ? data.guests : {},
-          deleted_guests: Array.isArray(data.deleted_guests) ? data.deleted_guests : []
+          deleted_guests: Array.isArray(data.deleted_guests) ? data.deleted_guests : [],
+          settings: (data.settings && typeof data.settings === 'object') ? data.settings : {}
         };
       }
     } catch (e) {}
-    return { deleted_orders: [], parent_swaps: {}, checkins: {}, verified_orders: [], guests: {}, deleted_guests: [] };
+    return { deleted_orders: [], parent_swaps: {}, checkins: {}, verified_orders: [], guests: {}, deleted_guests: [], settings: {} };
   },
   save(vault) {
     try {
       localStorage.setItem(this.KEY, JSON.stringify(vault));
     } catch (e) {}
+  },
+  recordSettings(newSettings) {
+    if (!newSettings || typeof newSettings !== 'object') return;
+    const v = this.get();
+    v.settings = {
+      ...v.settings,
+      ...newSettings
+    };
+    this.save(v);
+    syncVaultWithServer();
   },
   recordDelete(orderId) {
     if (!orderId) return;
@@ -134,6 +145,7 @@ async function syncVaultWithServer() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(localVault)
     });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
     if (json.success && json.data) {
       const serverVault = json.data;
@@ -149,6 +161,11 @@ async function syncVaultWithServer() {
       for (const dCode of allDeletedGuests) {
         delete mergedGuests[dCode];
       }
+
+      const mergedSettings = {
+        ...(serverVault.settings || {}),
+        ...(localVault.settings || {})
+      };
 
       // Merge server vault with local vault (union)
       const merged = {
@@ -169,15 +186,19 @@ async function syncVaultWithServer() {
           ...(serverVault.verified_orders || [])
         ])),
         guests: mergedGuests,
-        deleted_guests: allDeletedGuests
+        deleted_guests: allDeletedGuests,
+        settings: mergedSettings
       };
       Vault.save(merged);
       updateVaultBadge(true);
+      return true;
     }
   } catch (err) {
     console.warn('Vault sync ping failed (offline or server sleeping):', err.message);
     updateVaultBadge(false);
+    return false;
   }
+  return false;
 }
 
 function updateVaultBadge(isOnline) {
@@ -187,8 +208,8 @@ function updateVaultBadge(isOnline) {
       badge.innerHTML = `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-200 border border-emerald-500/40"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Auto-Vault Aktif</span>`;
       badge.title = 'Semua perubahan sesi, check-in, dan transaksi tersimpan aman di database & browser vault.';
     } else {
-      badge.innerHTML = `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-200 border border-amber-500/40"><span class="w-2 h-2 rounded-full bg-amber-400"></span> Mode Offline</span>`;
-      badge.title = 'Sedang menghubungkan ke server...';
+      badge.innerHTML = `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-200 border border-amber-500/40"><span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span> Menghubungkan Server...</span>`;
+      badge.title = 'Sedang menyinkronkan data dengan server (Render cold start)...';
     }
   }
 }
@@ -196,8 +217,13 @@ function updateVaultBadge(isOnline) {
 async function initApp() {
   if (window.lucide) lucide.createIcons();
   
-  // 1. Immediately re-hydrate & sync client vault with server on container boot / page open
-  await syncVaultWithServer();
+  // 1. Resilient Cold-Boot Sync: Retry up to 15 times (~30 seconds) until Render container wakes up
+  let synced = false;
+  for (let attempt = 1; attempt <= 15; attempt++) {
+    synced = await syncVaultWithServer();
+    if (synced) break;
+    await new Promise(r => setTimeout(r, 2000));
+  }
 
   await loadSettings();
   await loadStats();
@@ -1510,17 +1536,24 @@ async function loadSettings() {
     } catch (e) {}
 
     const hasOverrides = Object.keys(savedOverrides).length > 0;
-    const isCustomizedLocal = savedLocal && (savedLocal._customized === true || savedLocal._updatedAt);
+    const vaultSettings = (typeof Vault !== 'undefined' && Vault.get) ? (Vault.get().settings || {}) : {};
+    const isCustomizedLocal = (savedLocal && (savedLocal._customized === true || savedLocal._updatedAt)) || Object.keys(vaultSettings).length > 0;
+    const clientCandidateSettings = {
+      ...(savedLocal || {}),
+      ...vaultSettings
+    };
 
     // Check if browser has customized settings or order overrides that need auto-healing
     let shouldRecover = false;
     if (hasOverrides) shouldRecover = true;
     if (isCustomizedLocal) {
-      if (savedLocal.event_name && savedLocal.event_name !== currentSettings.event_name) shouldRecover = true;
-      if (savedLocal.school_name && savedLocal.school_name !== currentSettings.school_name) shouldRecover = true;
-      if (savedLocal.contact_person && savedLocal.contact_person !== currentSettings.contact_person) shouldRecover = true;
-      if (savedLocal.wa_api_token && savedLocal.wa_api_token !== currentSettings.wa_api_token) shouldRecover = true;
-      if (savedLocal.google_sheet_url && savedLocal.google_sheet_url !== currentSettings.google_sheet_url) shouldRecover = true;
+      for (const [k, v] of Object.entries(clientCandidateSettings)) {
+        if (k.startsWith('_')) continue;
+        if (v !== undefined && v !== null && v !== '' && String(currentSettings[k] || '') !== String(v || '')) {
+          shouldRecover = true;
+          break;
+        }
+      }
     }
 
     if (shouldRecover) {
@@ -1530,7 +1563,7 @@ async function loadSettings() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            settings: isCustomizedLocal ? savedLocal : undefined,
+            settings: isCustomizedLocal ? clientCandidateSettings : undefined,
             overrides: hasOverrides ? savedOverrides : undefined
           })
         });
@@ -1662,10 +1695,11 @@ async function handleSaveSettings(e) {
 
     if (!result.success) throw new Error(result.message);
 
-    // Save to localStorage as well for browser auto-healing
+    // Save to localStorage and Vault as well for browser auto-healing
     payload._customized = true;
     payload._updatedAt = Date.now();
     localStorage.setItem('school_ticket_persistent_settings', JSON.stringify(payload));
+    Vault.recordSettings(payload);
 
     showToast('Pengaturan berhasil disimpan permanen!', 'success');
     await loadSettings();
@@ -1704,12 +1738,18 @@ async function handleImportBackup(event) {
 
       if (!result.success) throw new Error(result.message || result.error);
 
+      if (result.vault) {
+        Vault.save(result.vault);
+      }
+
       if (result.data) {
         localStorage.setItem('school_ticket_persistent_settings', JSON.stringify(result.data));
       }
 
       showToast('✓ Data dan pengaturan berhasil dipulihkan secara penuh!', 'success');
       await Promise.all([loadSettings(), loadStats(), loadOrders()]);
+      if (typeof loadInvitations === 'function') loadInvitations();
+      if (typeof loadCapacityRecap === 'function') loadCapacityRecap();
       if (typeof loadSessionRecap === 'function') loadSessionRecap();
     } catch (err) {
       alert('Gagal memulihkan file cadangan: ' + err.message);
@@ -2971,6 +3011,10 @@ async function handleSaveCapacity(e) {
     if (!json.success) throw new Error(json.error || json.message);
 
     showToast(json.message || 'Kapasitas auditorium berhasil diperbarui!', 'success');
+    Vault.recordSettings({
+      capacity_session_1: capS1,
+      capacity_session_2: capS2
+    });
     loadCapacityRecap();
   } catch (err) {
     alert('Gagal menyimpan kapasitas: ' + err.message);

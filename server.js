@@ -1506,38 +1506,58 @@ app.post('/api/settings/backup-sync', async (req, res) => {
   }
 });
 
-// 11c. Export Settings & Data State (JSON File Download)
+// 11c. Export Settings & Full Data State (JSON File Download)
 app.get('/api/settings/export', (req, res) => {
   try {
     const settings = getSettings();
+    const vault = getVaultState();
     const ordersCache = loadOrdersCache();
     res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Content-Disposition', 'attachment; filename="backup-sistem-tiket.json"');
-    res.send(JSON.stringify({ settings, orders_cache: ordersCache, exported_at: new Date().toISOString() }, null, 2));
+    res.setHeader('Content-Disposition', 'attachment; filename="backup-sistem-tiket-regina.json"');
+    res.send(JSON.stringify({
+      version: 2,
+      settings,
+      vault,
+      orders_cache: ordersCache,
+      exported_at: new Date().toISOString()
+    }, null, 2));
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// 11d. Import Settings & Data State (JSON File Upload / Restore)
+// 11d. Import Settings & Full Data State (JSON File Upload / Restore)
 app.post('/api/settings/import', (req, res) => {
   try {
-    const { settings: importedSettings, orders_cache: importedCache } = req.body;
+    const { settings: importedSettings, orders_cache: importedCache, vault: importedVault } = req.body;
+    
+    // Restore Vault (Parent swaps, guests, checkins, verified orders, deleted orders, settings)
+    if (importedVault && typeof importedVault === 'object') {
+      applyVaultSync(importedVault);
+    }
+
     if (importedSettings && typeof importedSettings === 'object') {
       for (const [k, v] of Object.entries(importedSettings)) {
         updateSetting(k, v);
       }
     }
+    
     if (importedCache && typeof importedCache === 'object') {
       const existing = loadOrdersCache();
       Object.assign(existing, importedCache);
       saveOrdersCache(existing);
     }
+    
     const current = getSettings();
     if (current.google_sheet_url) {
       syncFromGoogleSheet(current.google_sheet_url, { sendWaOnSync: false }).catch(() => {});
     }
-    res.json({ success: true, message: 'Cadangan berhasil diimpor & dipulihkan!', data: current });
+    res.json({
+      success: true,
+      message: 'Seluruh cadangan (pengaturan, sesi orang tua, tamu, dan presensi) berhasil dipulihkan!',
+      data: current,
+      vault: getVaultState()
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
