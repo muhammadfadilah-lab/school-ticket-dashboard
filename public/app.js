@@ -216,6 +216,9 @@ function updateVaultBadge(isOnline) {
 
 async function initApp() {
   if (window.lucide) lucide.createIcons();
+
+  // Instant device sync if opened via QR Code or PIN link (?sync_token=... or ?pin=...)
+  await handleUrlDeviceSync();
   
   // 1. Resilient Cold-Boot Sync: Retry up to 15 times (~30 seconds) until Render container wakes up
   let synced = false;
@@ -230,6 +233,7 @@ async function initApp() {
   await loadOrders();
   loadInvitations();
   loadCapacityRecap();
+  loadReportData();
   generateAppsScriptTemplate();
   
   // Auto-sync spreadsheet in background when opening dashboard if configured
@@ -243,7 +247,7 @@ async function initApp() {
         showToast(`Tersinkron otomatis: ${res.data.newOrders} pesanan baru dari Spreadsheet`, 'info');
         loadStats();
         loadOrders();
-        if (typeof loadSessionRecap === 'function') loadSessionRecap();
+        loadReportData();
       }
     }).catch(() => {});
   }
@@ -262,6 +266,7 @@ function refreshData() {
   const tasks = [loadStats(), loadOrders()];
   if (typeof loadInvitations === 'function') tasks.push(loadInvitations());
   if (typeof loadCapacityRecap === 'function') tasks.push(loadCapacityRecap());
+  if (typeof loadReportData === 'function') tasks.push(loadReportData());
   if (currentSettings.google_sheet_url && currentSettings.auto_sync_enabled !== false && currentSettings.auto_sync_enabled !== 'false') {
     tasks.push(
       fetch('/api/sync/google-sheet', {
@@ -316,7 +321,7 @@ function switchTab(tabId) {
     loadCapacityRecap();
   }
   if (tabId === 'recap') {
-    loadSessionRecap();
+    loadReportData();
   }
 
   if (window.lucide) lucide.createIcons();
@@ -3016,8 +3021,756 @@ async function handleSaveCapacity(e) {
       capacity_session_2: capS2
     });
     loadCapacityRecap();
+    if (typeof loadReportData === 'function') loadReportData();
   } catch (err) {
     alert('Gagal menyimpan kapasitas: ' + err.message);
   }
 }
+
+// ==========================================
+// MULTI-DEVICE INSTANT SYNC ENGINE
+// ==========================================
+function openDeviceSyncModal() {
+  const modal = document.getElementById('device-sync-modal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  switchDeviceSyncTab('qr');
+
+  const qrImg = document.getElementById('device-sync-qr-img');
+  const urlInput = document.getElementById('device-sync-url-input');
+  if (urlInput) urlInput.value = 'Membuat tautan sinkronisasi aman...';
+
+  const localVault = Vault.get();
+  fetch('/api/sync/device-link/create', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ vault: localVault })
+  })
+    .then(r => r.json())
+    .then(res => {
+      if (res.success) {
+        if (qrImg && res.qr_code) qrImg.src = res.qr_code;
+        const currentOrigin = window.location.origin;
+        const finalUrl = res.token ? `${currentOrigin}/?sync_token=${res.token}` : (res.sync_url || window.location.href);
+        if (urlInput) urlInput.value = finalUrl;
+      } else {
+        throw new Error(res.error || 'Gagal membuat tautan sync');
+      }
+    })
+    .catch(err => {
+      console.warn('Device link create error:', err);
+      if (urlInput) urlInput.value = window.location.href;
+    });
+
+  if (window.lucide) lucide.createIcons();
+}
+
+function closeDeviceSyncModal() {
+  const modal = document.getElementById('device-sync-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function switchDeviceSyncTab(tab) {
+  const tabs = ['qr', 'pin', 'cloud'];
+  tabs.forEach(t => {
+    const btn = document.getElementById(`device-tab-btn-${t}`);
+    const panel = document.getElementById(`device-tab-panel-${t}`);
+    if (btn) {
+      if (t === tab) {
+        btn.className = 'flex-1 py-2 rounded-xl text-center font-bold bg-white text-indigo-900 shadow-sm transition';
+      } else {
+        btn.className = 'flex-1 py-2 rounded-xl text-center text-slate-600 hover:text-slate-900 transition';
+      }
+    }
+    if (panel) {
+      panel.classList.toggle('hidden', t !== tab);
+    }
+  });
+
+  if (tab === 'pin') {
+    const pinInput = document.getElementById('device-pin-input');
+    if (pinInput) setTimeout(() => pinInput.focus(), 100);
+  }
+
+  if (window.lucide) lucide.createIcons();
+}
+
+function copyDeviceSyncUrl() {
+  const input = document.getElementById('device-sync-url-input');
+  if (!input || !input.value) return;
+  navigator.clipboard.writeText(input.value).then(() => {
+    showToast('Tautan berhasil disalin! Buka tautan ini di browser smartphone Anda.', 'success');
+  }).catch(() => {
+    input.select();
+    document.execCommand('copy');
+    showToast('Tautan berhasil disalin!', 'success');
+  });
+}
+
+function copyVaultBackupString() {
+  try {
+    const v = Vault.get();
+    const str = JSON.stringify(v);
+    navigator.clipboard.writeText(str).then(() => {
+      showToast('Kode cadangan VAULT_BACKUP berhasil disalin! Tempel di Render Environment.', 'success');
+    }).catch(() => {
+      prompt('Salin teks cadangan VAULT_BACKUP berikut:', str);
+    });
+  } catch (err) {
+    showToast('Gagal menyalin cadangan: ' + err.message, 'error');
+  }
+}
+
+async function handleClaimPin() {
+  const pinInput = document.getElementById('device-pin-input');
+  const btn = document.getElementById('btn-claim-pin');
+  if (!pinInput) return;
+  const pin = pinInput.value.trim();
+  if (!pin || pin.length < 6) {
+    showToast('Harap masukkan 6 digit PIN sinkronisasi yang valid.', 'warning');
+    return;
+  }
+
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span class="inline-block animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2"></span> Menyinkronkan...`;
+  }
+
+  try {
+    const res = await fetch(`/api/sync/device-link/claim?pin=${encodeURIComponent(pin)}`);
+    const json = await res.json();
+    if (!json.success || !json.vault) {
+      throw new Error(json.error || 'PIN tidak valid atau kedaluwarsa.');
+    }
+
+    const local = Vault.get();
+    const incoming = json.vault;
+    const merged = {
+      deleted_orders: Array.from(new Set([...(local.deleted_orders || []), ...(incoming.deleted_orders || [])])),
+      parent_swaps: { ...(local.parent_swaps || {}), ...(incoming.parent_swaps || {}) },
+      checkins: { ...(local.checkins || {}), ...(incoming.checkins || {}) },
+      verified_orders: Array.from(new Set([...(local.verified_orders || []), ...(incoming.verified_orders || [])])),
+      guests: { ...(local.guests || {}), ...(incoming.guests || {}) },
+      deleted_guests: Array.from(new Set([...(local.deleted_guests || []), ...(incoming.deleted_guests || [])])),
+      settings: { ...(local.settings || {}), ...(incoming.settings || {}) }
+    };
+    Vault.save(merged);
+
+    showToast('Perangkat berhasil disinkronkan!', 'success');
+    closeDeviceSyncModal();
+
+    await loadSettings();
+    await loadStats();
+    await loadOrders();
+    if (typeof loadInvitations === 'function') loadInvitations();
+    if (typeof loadCapacityRecap === 'function') loadCapacityRecap();
+    if (typeof loadReportData === 'function') loadReportData();
+  } catch (err) {
+    showToast('Gagal sinkronisasi: ' + err.message, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<i data-lucide="link" class="w-4 h-4 mr-2"></i><span>Hubungkan & Sinkronkan Perangkat Ini</span>`;
+      if (window.lucide) lucide.createIcons();
+    }
+  }
+}
+
+async function handleUrlDeviceSync() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('sync_token') || params.get('token');
+    const pin = params.get('pin');
+
+    if (!token && !pin) return;
+
+    showToast('Menyinkronkan data antar-perangkat...', 'info');
+    const query = token ? `token=${encodeURIComponent(token)}` : `pin=${encodeURIComponent(pin)}`;
+    const res = await fetch(`/api/sync/device-link/claim?${query}`);
+    const json = await res.json();
+    if (json.success && json.vault) {
+      const incoming = json.vault;
+      const local = Vault.get();
+      const merged = {
+        deleted_orders: Array.from(new Set([...(local.deleted_orders || []), ...(incoming.deleted_orders || [])])),
+        parent_swaps: { ...(local.parent_swaps || {}), ...(incoming.parent_swaps || {}) },
+        checkins: { ...(local.checkins || {}), ...(incoming.checkins || {}) },
+        verified_orders: Array.from(new Set([...(local.verified_orders || []), ...(incoming.verified_orders || [])])),
+        guests: { ...(local.guests || {}), ...(incoming.guests || {}) },
+        deleted_guests: Array.from(new Set([...(local.deleted_guests || []), ...(incoming.deleted_guests || [])])),
+        settings: { ...(local.settings || {}), ...(incoming.settings || {}) }
+      };
+      Vault.save(merged);
+      showToast('Sinkronisasi perangkat berhasil! Seluruh data acara aktif.', 'success');
+
+      const cleanUrl = window.location.pathname + window.location.hash;
+      window.history.replaceState({}, document.title, cleanUrl);
+    }
+  } catch (err) {
+    console.warn('URL device sync skipped:', err);
+  }
+}
+
+// ==========================================
+// LAPORAN RESMI HASIL PENJUALAN, OKUPANSI & KEHADIRAN
+// ==========================================
+let currentReportData = null;
+let currentReportCategory = 'buyers';
+
+async function loadReportData() {
+  const kpiContainer = document.getElementById('report-kpi-cards');
+  
+  try {
+    const res = await fetch('/api/reports/sales-occupancy');
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || 'Gagal mengambil data laporan');
+
+    currentReportData = json.data;
+
+    // Update print headers and signatures
+    const now = new Date();
+    const formattedTimestamp = now.toLocaleDateString('id-ID', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    }) + ' • Pukul ' + now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB';
+    
+    const printTimeEl = document.getElementById('print-report-timestamp');
+    if (printTimeEl) {
+      printTimeEl.textContent = `Waktu Generate Laporan: ${formattedTimestamp}`;
+    }
+
+    const printSignEl = document.getElementById('print-signature-date');
+    if (printSignEl) {
+      printSignEl.textContent = now.toLocaleDateString('id-ID', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+      });
+    }
+
+    renderReportKpiCards(currentReportData.recap);
+    renderReportMatrix(currentReportData.recap);
+    filterReportTables();
+  } catch (err) {
+    console.error('Error loadReportData:', err);
+    if (kpiContainer) {
+      kpiContainer.innerHTML = `<div class="col-span-full py-8 text-center text-red-500 text-xs">Gagal memuat laporan: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+}
+
+function renderReportKpiCards(recap) {
+  const container = document.getElementById('report-kpi-cards');
+  if (!container || !recap) return;
+
+  const s1 = recap.session_1;
+  const s2 = recap.session_2;
+  const gt = recap.grand_total;
+
+  const cards = [
+    {
+      title: 'Sesi 1 (Pagi: 08.00 - 12.00)',
+      badgeColor: 'bg-indigo-100 text-indigo-800 border-indigo-200',
+      data: s1,
+      capacity: s1.capacity
+    },
+    {
+      title: 'Sesi 2 (Siang: 13.00 - 16.00)',
+      badgeColor: 'bg-purple-100 text-purple-800 border-purple-200',
+      data: s2,
+      capacity: s2.capacity
+    },
+    {
+      title: 'Grand Total Keseluruhan',
+      badgeColor: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+      data: gt,
+      capacity: gt.capacity,
+      isTotal: true
+    }
+  ];
+
+  container.innerHTML = cards.map(c => {
+    const d = c.data;
+    const occRate = d.occupancy_rate || 0;
+    const attRate = d.attendance_rate || 0;
+    const revenue = d.buyers ? (d.buyers.revenue_verified || 0) : 0;
+
+    return `
+      <div class="bg-white p-5 rounded-3xl border ${c.isTotal ? 'border-emerald-200 bg-emerald-50/20' : 'border-slate-200'} shadow-sm relative flex flex-col justify-between hover:border-indigo-200 transition">
+        <div>
+          <div class="flex items-center justify-between mb-3">
+            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold ${c.badgeColor} border">
+              <i data-lucide="${c.isTotal ? 'award' : 'sparkles'}" class="w-3.5 h-3.5"></i>
+              ${c.title}
+            </span>
+            <span class="text-xs font-bold text-slate-500">Kapasitas: ${d.capacity} Kursi</span>
+          </div>
+
+          <!-- Total Distributed & Occupancy -->
+          <div class="mt-2 mb-3">
+            <div class="flex items-baseline justify-between mb-1">
+              <div class="flex items-baseline gap-1.5">
+                <span class="text-3xl font-black text-slate-900">${d.total_distributed}</span>
+                <span class="text-xs font-bold text-slate-400">/ ${d.capacity} Pax</span>
+              </div>
+              <span class="text-xs font-extrabold ${occRate >= 90 ? 'text-rose-600' : 'text-indigo-600'}">${occRate}% Okupansi</span>
+            </div>
+            <div class="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+              <div class="h-2.5 rounded-full transition-all duration-500 ${occRate >= 90 ? 'bg-rose-500' : occRate >= 70 ? 'bg-indigo-600' : 'bg-emerald-500'}" style="width: ${Math.min(occRate, 100)}%"></div>
+            </div>
+            <div class="flex justify-between text-[11px] text-slate-500 mt-1">
+              <span>Sisa Kursi: <strong class="text-slate-800">${d.remaining_seats} Kursi</strong></span>
+              <span class="text-emerald-700 font-semibold">Tersedia untuk Dijual</span>
+            </div>
+          </div>
+
+          <!-- Attendance Rate -->
+          <div class="p-3 rounded-2xl bg-slate-50 border border-slate-100 mb-3 space-y-1.5">
+            <div class="flex justify-between items-center text-xs">
+              <span class="text-slate-500 font-semibold flex items-center gap-1">
+                <i data-lucide="check-circle-2" class="w-3.5 h-3.5 text-emerald-600"></i>
+                Kehadiran Gate (Cek-in)
+              </span>
+              <span class="font-bold text-slate-900">${d.total_attended} / ${d.total_distributed} Hadir (${attRate}%)</span>
+            </div>
+            <div class="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+              <div class="bg-emerald-600 h-1.5 rounded-full transition-all duration-500" style="width: ${Math.min(attRate, 100)}%"></div>
+            </div>
+          </div>
+
+          <!-- Breakdown Mini Badges -->
+          <div class="grid grid-cols-3 gap-1.5 text-center text-[10px] mb-3">
+            <div class="p-2 rounded-xl bg-indigo-50 border border-indigo-100">
+              <span class="text-indigo-600 block font-bold">Ortu</span>
+              <strong class="text-indigo-950 text-xs font-black">${d.parents.tickets}</strong>
+              <span class="text-slate-400 block text-[9px]">(${d.parents.checked_in_tickets} Hadir)</span>
+            </div>
+            <div class="p-2 rounded-xl bg-purple-50 border border-purple-100">
+              <span class="text-purple-600 block font-bold">Tamu</span>
+              <strong class="text-purple-950 text-xs font-black">${d.guests.tickets}</strong>
+              <span class="text-slate-400 block text-[9px]">(${d.guests.checked_in_tickets} Hadir)</span>
+            </div>
+            <div class="p-2 rounded-xl bg-emerald-50 border border-emerald-100">
+              <span class="text-emerald-600 block font-bold">Pembeli</span>
+              <strong class="text-emerald-950 text-xs font-black">${d.buyers ? d.buyers.tickets_verified : 0}</strong>
+              <span class="text-slate-400 block text-[9px]">(${d.buyers ? d.buyers.checked_in_tickets : 0} Hadir)</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="border-t border-slate-100 pt-3 flex items-center justify-between text-xs">
+          <div>
+            <span class="text-slate-400 text-[10px] block">Pendapatan Tiket Lunas</span>
+            <strong class="text-emerald-700 text-sm font-black">Rp ${formatRupiah(revenue)}</strong>
+          </div>
+          ${d.buyers && d.buyers.tickets_pending > 0 ? `
+            <div class="text-right">
+              <span class="text-amber-500 text-[10px] block">Pending</span>
+              <span class="text-amber-700 text-xs font-bold">${d.buyers.tickets_pending} Tiket</span>
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  if (window.lucide) lucide.createIcons();
+}
+
+function renderReportMatrix(recap) {
+  const tbody = document.getElementById('report-matrix-tbody');
+  const grandCapBadge = document.getElementById('report-matrix-grand-cap');
+  if (!tbody || !recap) return;
+
+  const s1 = recap.session_1;
+  const s2 = recap.session_2;
+  const gt = recap.grand_total;
+
+  if (grandCapBadge) {
+    grandCapBadge.textContent = `Total Kapasitas: ${gt.capacity} Kursi`;
+  }
+
+  const rows = [
+    {
+      label: '1. Tiket Orang Tua Siswa (Kelas 7, 8, 9)',
+      icon: 'users',
+      s1: `${s1.parents.tickets} Tiket <span class="text-[10px] text-slate-400 block font-normal">(${s1.parents.checked_in_tickets} Hadir)</span>`,
+      s2: `${s2.parents.tickets} Tiket <span class="text-[10px] text-slate-400 block font-normal">(${s2.parents.checked_in_tickets} Hadir)</span>`,
+      total: `${gt.parents.tickets} Tiket <span class="text-[10px] text-slate-400 block font-normal">(${gt.parents.checked_in_tickets} Hadir)</span>`,
+      note: 'Alokasi 2 tiket/orang tua (Kls 7 S1, Kls 8 & 9 S2, mendukung tukar sesi)',
+      highlight: false
+    },
+    {
+      label: '2. Tiket Tamu Undangan Kehormatan',
+      icon: 'award',
+      s1: `${s1.guests.tickets} Tiket <span class="text-[10px] text-slate-400 block font-normal">(${s1.guests.checked_in_tickets} Hadir)</span>`,
+      s2: `${s2.guests.tickets} Tiket <span class="text-[10px] text-slate-400 block font-normal">(${s2.guests.checked_in_tickets} Hadir)</span>`,
+      total: `${gt.guests.tickets} Tiket <span class="text-[10px] text-slate-400 block font-normal">(${gt.guests.checked_in_tickets} Hadir)</span>`,
+      note: 'Undangan kehormatan yayasan, dinas, dan mitra sekolah',
+      highlight: false
+    },
+    {
+      label: '3. Tiket yang Dibeli Lunas (Verified)',
+      icon: 'badge-check',
+      s1: `<strong class="text-emerald-700">${s1.buyers.tickets_verified} Tiket</strong><span class="text-[10px] text-slate-500 block">Rp ${formatRupiah(s1.buyers.revenue_verified)}</span>`,
+      s2: `<strong class="text-emerald-700">${s2.buyers.tickets_verified} Tiket</strong><span class="text-[10px] text-slate-500 block">Rp ${formatRupiah(s2.buyers.revenue_verified)}</span>`,
+      total: `<strong class="text-emerald-700">${gt.buyers.tickets_verified} Tiket</strong><span class="text-[10px] text-slate-500 block">Rp ${formatRupiah(gt.buyers.revenue_verified)}</span>`,
+      note: 'Pembeli umum yang pembayarannya telah terverifikasi lunas',
+      highlight: false
+    },
+    {
+      label: '   * Tiket Pembelian Pending (Menunggu)',
+      icon: 'clock',
+      s1: `<span class="text-amber-700 font-semibold">${s1.buyers.tickets_pending} Tiket</span>`,
+      s2: `<span class="text-amber-700 font-semibold">${s2.buyers.tickets_pending} Tiket</span>`,
+      total: `<span class="text-amber-700 font-semibold">${gt.buyers.tickets_pending} Tiket</span>`,
+      note: 'Menunggu konfirmasi mutasi bank / bukti transfer',
+      highlight: false,
+      isSub: true
+    },
+    {
+      label: 'TOTAL TIKET TERDISTRIBUSI (TERISI FIX)',
+      icon: 'check-square-2',
+      s1: `<strong class="text-indigo-900 text-sm font-black">${s1.total_distributed} Tiket</strong>`,
+      s2: `<strong class="text-indigo-900 text-sm font-black">${s2.total_distributed} Tiket</strong>`,
+      total: `<strong class="text-indigo-950 text-sm font-black">${gt.total_distributed} Tiket</strong>`,
+      note: 'Total kursi terisi pasti (Ortu + Tamu + Pembeli Lunas)',
+      highlight: 'bg-indigo-50/70 border-y border-indigo-100 font-bold'
+    },
+    {
+      label: 'TOTAL KAPASITAS AUDITORIUM',
+      icon: 'armchair',
+      s1: `<span class="font-bold text-slate-700">${s1.capacity} Kursi</span>`,
+      s2: `<span class="font-bold text-slate-700">${s2.capacity} Kursi</span>`,
+      total: `<span class="font-bold text-slate-900">${gt.capacity} Kursi</span>`,
+      note: 'Ditetapkan panitia di tab Kapasitas Kursi',
+      highlight: false
+    },
+    {
+      label: 'SISA KURSI TERSEDIA SAAT INI',
+      icon: 'pie-chart',
+      s1: `<span class="px-2.5 py-1 rounded-full text-xs font-extrabold ${s1.remaining_seats > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}">${s1.remaining_seats} Kursi</span>`,
+      s2: `<span class="px-2.5 py-1 rounded-full text-xs font-extrabold ${s2.remaining_seats > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}">${s2.remaining_seats} Kursi</span>`,
+      total: `<span class="px-2.5 py-1 rounded-full text-xs font-extrabold ${gt.remaining_seats > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}">${gt.remaining_seats} Kursi</span>`,
+      note: 'Sisa kuota kursi yang masih dapat dijual ke penonton umum',
+      highlight: 'bg-emerald-50/40'
+    },
+    {
+      label: 'PERSENTASE OKUPANSI AUDITORIUM',
+      icon: 'percent',
+      s1: `<span class="font-bold ${s1.occupancy_rate >= 90 ? 'text-rose-600' : 'text-indigo-700'}">${s1.occupancy_rate}%</span>`,
+      s2: `<span class="font-bold ${s2.occupancy_rate >= 90 ? 'text-rose-600' : 'text-indigo-700'}">${s2.occupancy_rate}%</span>`,
+      total: `<span class="font-black text-indigo-900">${gt.occupancy_rate}%</span>`,
+      note: 'Rasio keterisian: (Tiket Terdistribusi / Kapasitas Kursi) * 100',
+      highlight: false
+    },
+    {
+      label: 'TOTAL KEHADIRAN GATE (CEK-IN)',
+      icon: 'scan',
+      s1: `<strong class="text-slate-800">${s1.total_attended} Hadir</strong>`,
+      s2: `<strong class="text-slate-800">${s2.total_attended} Hadir</strong>`,
+      total: `<strong class="text-slate-900">${gt.total_attended} Hadir</strong>`,
+      note: 'Penonton yang sudah scan QR Code / Barcode tiket di pintu masuk',
+      highlight: false
+    },
+    {
+      label: 'TINGKAT KEHADIRAN (ATTENDANCE RATE)',
+      icon: 'user-check',
+      s1: `<span class="font-bold text-emerald-700">${s1.attendance_rate}%</span>`,
+      s2: `<span class="font-bold text-emerald-700">${s2.attendance_rate}%</span>`,
+      total: `<span class="font-black text-emerald-800">${gt.attendance_rate}%</span>`,
+      note: 'Rasio kehadiran: (Total Hadir / Tiket Terdistribusi) * 100',
+      highlight: 'bg-emerald-50/60 font-bold'
+    }
+  ];
+
+  tbody.innerHTML = rows.map(r => `
+    <tr class="${r.highlight || 'hover:bg-slate-50/80'} transition text-xs">
+      <td class="py-3 px-4 ${r.isSub ? 'pl-8 text-slate-500 italic' : 'font-bold text-slate-900'}">
+        <span class="inline-flex items-center gap-2">
+          <i data-lucide="${r.icon}" class="w-3.5 h-3.5 ${r.isSub ? 'text-amber-500' : 'text-indigo-600'} flex-shrink-0"></i>
+          <span>${escapeHtml(r.label)}</span>
+        </span>
+      </td>
+      <td class="py-3 px-4 text-center font-medium">${r.s1}</td>
+      <td class="py-3 px-4 text-center font-medium">${r.s2}</td>
+      <td class="py-3 px-4 text-center font-bold">${r.total}</td>
+      <td class="py-3 px-4 text-slate-500 text-[11px]">${escapeHtml(r.note)}</td>
+    </tr>
+  `).join('');
+
+  if (window.lucide) lucide.createIcons();
+}
+
+function switchReportCategory(category) {
+  currentReportCategory = category;
+
+  const tabs = ['buyers', 'parents', 'guests'];
+  tabs.forEach(t => {
+    const btn = document.getElementById(`report-subtab-${t}`);
+    const panel = document.getElementById(`report-panel-${t}`);
+    if (btn) {
+      if (t === category) {
+        btn.className = 'px-3.5 py-1.5 rounded-xl text-xs font-bold transition bg-white text-indigo-900 shadow-sm';
+      } else {
+        btn.className = 'px-3.5 py-1.5 rounded-xl text-xs font-semibold text-slate-600 hover:text-slate-900 transition';
+      }
+    }
+    if (panel) {
+      panel.classList.toggle('hidden', t !== category);
+    }
+  });
+
+  const payFilter = document.getElementById('report-filter-payment');
+  if (payFilter) {
+    payFilter.classList.toggle('hidden', category !== 'buyers');
+  }
+
+  filterReportTables();
+}
+
+function filterReportTables() {
+  if (!currentReportData) return;
+
+  const sessionFilter = document.getElementById('report-filter-session')?.value || 'all';
+  const checkinFilter = document.getElementById('report-filter-checkin')?.value || 'all';
+  const paymentFilter = document.getElementById('report-filter-payment')?.value || 'all';
+  const search = (document.getElementById('report-search-input')?.value || '').toLowerCase().trim();
+  const countEl = document.getElementById('report-table-count');
+
+  if (currentReportCategory === 'buyers') {
+    let list = currentReportData.buyers || [];
+
+    if (sessionFilter !== 'all') {
+      list = list.filter(b => b.session === sessionFilter);
+    }
+    if (checkinFilter !== 'all') {
+      const wantChecked = checkinFilter === '1';
+      list = list.filter(b => b.checked_in === wantChecked);
+    }
+    if (paymentFilter !== 'all') {
+      list = list.filter(b => b.status === paymentFilter);
+    }
+    if (search) {
+      list = list.filter(b => {
+        return (b.name && b.name.toLowerCase().includes(search)) ||
+               (b.order_id && b.order_id.toLowerCase().includes(search)) ||
+               (b.email && b.email.toLowerCase().includes(search)) ||
+               (b.phone && b.phone.toLowerCase().includes(search)) ||
+               (b.sender_account_name && b.sender_account_name.toLowerCase().includes(search));
+      });
+    }
+
+    if (countEl) countEl.textContent = `Menampilkan ${list.length} data pembeli`;
+
+    const tbody = document.getElementById('report-buyers-tbody');
+    if (!tbody) return;
+
+    if (list.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="10" class="text-center py-8 text-slate-400 text-xs">Tidak ada data pembeli yang cocok dengan filter.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = list.map((b, idx) => {
+      const isLunas = b.status === 'verified';
+      const isHadir = b.checked_in === true;
+      const hadirTime = b.checked_in_at ? new Date(b.checked_in_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '';
+      const cleanPhone = (b.phone || '').replace(/[^0-9]/g, '');
+      const waUrl = cleanPhone ? (cleanPhone.startsWith('0') ? '62' + cleanPhone.slice(1) : cleanPhone) : '';
+
+      return `
+        <tr class="hover:bg-slate-50/80 transition text-xs">
+          <td class="py-3 px-3 text-slate-400 font-semibold">${idx + 1}</td>
+          <td class="py-3 px-3 font-mono font-bold text-indigo-900 whitespace-nowrap">${escapeHtml(b.order_id)}</td>
+          <td class="py-3 px-3">
+            <strong class="text-slate-900 block text-xs">${escapeHtml(b.name)}</strong>
+            ${b.sender_account_name ? `<span class="text-[10px] text-slate-400 block truncate max-w-[150px]">Rek: ${escapeHtml(b.sender_account_name)}</span>` : ''}
+          </td>
+          <td class="py-3 px-3 text-slate-600">${escapeHtml(b.email || '-')}</td>
+          <td class="py-3 px-3 font-semibold text-slate-700 whitespace-nowrap">
+            ${waUrl ? `
+              <a href="https://wa.me/${waUrl}" target="_blank" class="hover:text-emerald-600 inline-flex items-center gap-1">
+                <i data-lucide="phone" class="w-3 h-3 text-emerald-600"></i>
+                <span>${escapeHtml(b.phone)}</span>
+              </a>
+            ` : escapeHtml(b.phone || '-')}
+          </td>
+          <td class="py-3 px-3 whitespace-nowrap">
+            <span class="px-2.5 py-1 rounded-xl text-[10px] font-bold ${b.session === 'Sesi 2' ? 'bg-purple-100 text-purple-800' : 'bg-indigo-100 text-indigo-800'}">
+              ${escapeHtml(b.session)}
+            </span>
+          </td>
+          <td class="py-3 px-3 text-center font-black text-slate-900 text-sm whitespace-nowrap">${b.ticket_qty} Pax</td>
+          <td class="py-3 px-3 text-right font-bold text-indigo-950 whitespace-nowrap">Rp ${formatRupiah(b.total_amount)}</td>
+          <td class="py-3 px-3 text-center whitespace-nowrap">
+            ${isLunas ? `
+              <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                <i data-lucide="check" class="w-3 h-3"></i> Lunas
+              </span>
+            ` : `
+              <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">
+                <i data-lucide="clock" class="w-3 h-3"></i> Pending
+              </span>
+            `}
+          </td>
+          <td class="py-3 px-3 text-center whitespace-nowrap">
+            ${isHadir ? `
+              <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-600 text-white text-[10px] font-bold shadow-xs">
+                <i data-lucide="check-check" class="w-3 h-3"></i> Hadir ${hadirTime ? `(${hadirTime})` : ''}
+              </span>
+            ` : `
+              <span class="text-slate-400 text-[11px] font-medium">Belum Hadir</span>
+            `}
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+  } else if (currentReportCategory === 'parents') {
+    let list = currentReportData.parents || [];
+
+    if (sessionFilter !== 'all') {
+      list = list.filter(p => p.session === sessionFilter);
+    }
+    if (checkinFilter !== 'all') {
+      const wantChecked = checkinFilter === '1';
+      list = list.filter(p => p.checked_in === wantChecked);
+    }
+    if (search) {
+      list = list.filter(p => {
+        return (p.name && p.name.toLowerCase().includes(search)) ||
+               (p.invitation_code && p.invitation_code.toLowerCase().includes(search)) ||
+               (p.class_grade && p.class_grade.toLowerCase().includes(search));
+      });
+    }
+
+    if (countEl) countEl.textContent = `Menampilkan ${list.length} data orang tua`;
+
+    const tbody = document.getElementById('report-parents-tbody');
+    if (!tbody) return;
+
+    if (list.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="8" class="text-center py-8 text-slate-400 text-xs">Tidak ada data orang tua yang cocok dengan filter.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = list.map((p, idx) => {
+      const isHadir = p.checked_in === true;
+      const hadirTime = p.checked_in_at ? new Date(p.checked_in_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '';
+
+      return `
+        <tr class="hover:bg-slate-50/80 transition text-xs">
+          <td class="py-3 px-3 text-slate-400 font-semibold">${idx + 1}</td>
+          <td class="py-3 px-3 font-mono font-bold text-indigo-900 whitespace-nowrap">${escapeHtml(p.invitation_code)}</td>
+          <td class="py-3 px-3 font-bold text-slate-900">${escapeHtml(p.name)}</td>
+          <td class="py-3 px-3 text-center">
+            <span class="px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 font-bold text-[10px]">${escapeHtml(p.class_grade)}</span>
+          </td>
+          <td class="py-3 px-3 whitespace-nowrap">
+            <span class="px-2.5 py-1 rounded-xl text-[10px] font-bold ${p.session === 'Sesi 2' ? 'bg-purple-100 text-purple-800' : 'bg-indigo-100 text-indigo-800'}">
+              ${escapeHtml(p.session)}
+            </span>
+          </td>
+          <td class="py-3 px-3 text-center font-bold text-slate-900">${p.ticket_qty} Tiket</td>
+          <td class="py-3 px-3">
+            ${p.is_swapped ? `
+              <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold">
+                <i data-lucide="arrow-left-right" class="w-3 h-3"></i> Berpindah Sesi
+              </span>
+              ${p.swap_notes ? `<span class="text-[10px] text-slate-400 block truncate max-w-[130px]">${escapeHtml(p.swap_notes)}</span>` : ''}
+            ` : `
+              <span class="text-slate-400 text-[10px]">Sesi Sesuai Kelas</span>
+            `}
+          </td>
+          <td class="py-3 px-3 text-center whitespace-nowrap">
+            ${isHadir ? `
+              <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-600 text-white text-[10px] font-bold shadow-xs">
+                <i data-lucide="check-check" class="w-3 h-3"></i> Hadir ${hadirTime ? `(${hadirTime})` : ''}
+              </span>
+            ` : `
+              <span class="text-slate-400 text-[11px] font-medium">Belum Hadir</span>
+            `}
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+  } else if (currentReportCategory === 'guests') {
+    let list = currentReportData.guests || [];
+
+    if (sessionFilter !== 'all') {
+      list = list.filter(g => g.session === sessionFilter);
+    }
+    if (checkinFilter !== 'all') {
+      const wantChecked = checkinFilter === '1';
+      list = list.filter(g => g.checked_in === wantChecked);
+    }
+    if (search) {
+      list = list.filter(g => {
+        return (g.name && g.name.toLowerCase().includes(search)) ||
+               (g.invitation_code && g.invitation_code.toLowerCase().includes(search)) ||
+               (g.institution && g.institution.toLowerCase().includes(search)) ||
+               (g.phone && g.phone.toLowerCase().includes(search));
+      });
+    }
+
+    if (countEl) countEl.textContent = `Menampilkan ${list.length} data tamu undangan`;
+
+    const tbody = document.getElementById('report-guests-tbody');
+    if (!tbody) return;
+
+    if (list.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="8" class="text-center py-8 text-slate-400 text-xs">Tidak ada data tamu undangan yang cocok dengan filter.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = list.map((g, idx) => {
+      const isHadir = g.checked_in === true;
+      const hadirTime = g.checked_in_at ? new Date(g.checked_in_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '';
+
+      return `
+        <tr class="hover:bg-slate-50/80 transition text-xs">
+          <td class="py-3 px-3 text-slate-400 font-semibold">${idx + 1}</td>
+          <td class="py-3 px-3 font-mono font-bold text-indigo-900 whitespace-nowrap">${escapeHtml(g.invitation_code)}</td>
+          <td class="py-3 px-3 font-bold text-slate-900">${escapeHtml(g.name)}</td>
+          <td class="py-3 px-3 text-slate-600">${escapeHtml(g.institution || '-')}</td>
+          <td class="py-3 px-3 whitespace-nowrap">
+            <span class="px-2.5 py-1 rounded-xl text-[10px] font-bold ${g.session === 'Sesi 2' ? 'bg-purple-100 text-purple-800' : 'bg-indigo-100 text-indigo-800'}">
+              ${escapeHtml(g.session)}
+            </span>
+          </td>
+          <td class="py-3 px-3 text-center font-bold text-slate-900">${g.ticket_qty} Tiket</td>
+          <td class="py-3 px-3 text-slate-600 whitespace-nowrap">${escapeHtml(g.phone || '-')}</td>
+          <td class="py-3 px-3 text-center whitespace-nowrap">
+            ${isHadir ? `
+              <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-600 text-white text-[10px] font-bold shadow-xs">
+                <i data-lucide="check-check" class="w-3 h-3"></i> Hadir ${hadirTime ? `(${hadirTime})` : ''}
+              </span>
+            ` : `
+              <span class="text-slate-400 text-[11px] font-medium">Belum Hadir</span>
+            `}
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  if (window.lucide) lucide.createIcons();
+}
+
+function printOfficialReport() {
+  const printTimeEl = document.getElementById('print-report-timestamp');
+  const now = new Date();
+  if (printTimeEl) {
+    printTimeEl.textContent = `Waktu Cetak Laporan: ${now.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} • Pukul ${now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB`;
+  }
+  const printSignEl = document.getElementById('print-signature-date');
+  if (printSignEl) {
+    printSignEl.textContent = now.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+  }
+  window.print();
+}
+
 

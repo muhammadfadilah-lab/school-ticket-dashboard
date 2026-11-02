@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const QRCode = require('qrcode');
 const multer = require('multer');
+const crypto = require('crypto');
 const {
   db,
   initDatabase,
@@ -357,6 +358,331 @@ app.post('/api/settings/capacity', (req, res) => {
         capacity_session_2: settings.capacity_session_2
       }
     });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================================
+// LAPORAN HASIL PENJUALAN TIKET, OKUPANSI & KEHADIRAN
+// ==========================================
+function getSalesOccupancyReportData() {
+  const settings = getSettings();
+  const cap1 = parseInt(settings.capacity_session_1, 10) || 350;
+  const cap2 = parseInt(settings.capacity_session_2, 10) || 350;
+
+  function detectSession(raw) {
+    if (!raw) return 'Sesi 1';
+    const str = String(raw).toLowerCase().trim();
+    if (/session\s*2\b|sesi\s*2\b|\bsesi\s*ii\b|\bsession\s*ii\b|\b2\b\s*[:\-]|^2\b|13[.:]|14[.:]|15[.:]|siang|afternoon/.test(str)) return 'Sesi 2';
+    return 'Sesi 1';
+  }
+
+  // 1. Data Tiket Orang Tua
+  const parentRows = db.prepare("SELECT * FROM invitations WHERE type = 'parent' ORDER BY class_grade ASC, name ASC").all();
+  let parentS1Count = 0, parentS1Tickets = 0, parentS1CheckedInTickets = 0;
+  let parentS2Count = 0, parentS2Tickets = 0, parentS2CheckedInTickets = 0;
+
+  for (const p of parentRows) {
+    const sess = p.session === 'Sesi 2' ? 'Sesi 2' : 'Sesi 1';
+    const qty = p.ticket_qty !== undefined ? p.ticket_qty : 2;
+    const isChecked = p.checked_in === 1 ? qty : 0;
+    if (sess === 'Sesi 2') {
+      parentS2Count++;
+      parentS2Tickets += qty;
+      parentS2CheckedInTickets += isChecked;
+    } else {
+      parentS1Count++;
+      parentS1Tickets += qty;
+      parentS1CheckedInTickets += isChecked;
+    }
+  }
+
+  // 2. Data Tiket Tamu Undangan
+  const guestRows = db.prepare("SELECT * FROM invitations WHERE type = 'guest' ORDER BY name ASC").all();
+  let guestS1Count = 0, guestS1Tickets = 0, guestS1CheckedInTickets = 0;
+  let guestS2Count = 0, guestS2Tickets = 0, guestS2CheckedInTickets = 0;
+
+  for (const g of guestRows) {
+    const sess = g.session === 'Sesi 2' ? 'Sesi 2' : 'Sesi 1';
+    const qty = g.ticket_qty || 2;
+    const isChecked = g.checked_in === 1 ? qty : 0;
+    if (sess === 'Sesi 2') {
+      guestS2Count++;
+      guestS2Tickets += qty;
+      guestS2CheckedInTickets += isChecked;
+    } else {
+      guestS1Count++;
+      guestS1Tickets += qty;
+      guestS1CheckedInTickets += isChecked;
+    }
+  }
+
+  // 3. Data Tiket yang Dibeli
+  const orderRows = db.prepare('SELECT * FROM orders ORDER BY created_at DESC').all();
+  let buyerS1Orders = 0, buyerS1Tickets = 0, buyerS1Revenue = 0, buyerS1CheckedInTickets = 0;
+  let buyerS2Orders = 0, buyerS2Tickets = 0, buyerS2Revenue = 0, buyerS2CheckedInTickets = 0;
+  let buyerPendingS1Tickets = 0, buyerPendingS2Tickets = 0;
+  let buyerPendingS1Orders = 0, buyerPendingS2Orders = 0;
+  let buyerPendingS1Revenue = 0, buyerPendingS2Revenue = 0;
+
+  const buyerDetails = orderRows.map((ord, idx) => {
+    const sess = detectSession(ord.performance_session || ord.ticket_category);
+    const qty = ord.ticket_qty || 1;
+    const isVerified = ord.status === 'verified';
+    const isPending = ord.status === 'pending';
+    const isCheckedIn = ord.checked_in === 1;
+
+    if (sess === 'Sesi 2') {
+      if (isVerified) {
+        buyerS2Orders++;
+        buyerS2Tickets += qty;
+        buyerS2Revenue += (ord.total_amount || 0);
+        if (isCheckedIn) buyerS2CheckedInTickets += qty;
+      } else if (isPending) {
+        buyerPendingS2Orders++;
+        buyerPendingS2Tickets += qty;
+        buyerPendingS2Revenue += (ord.total_amount || 0);
+        if (isCheckedIn) buyerS2CheckedInTickets += qty;
+      }
+    } else {
+      if (isVerified) {
+        buyerS1Orders++;
+        buyerS1Tickets += qty;
+        buyerS1Revenue += (ord.total_amount || 0);
+        if (isCheckedIn) buyerS1CheckedInTickets += qty;
+      } else if (isPending) {
+        buyerPendingS1Orders++;
+        buyerPendingS1Tickets += qty;
+        buyerPendingS1Revenue += (ord.total_amount || 0);
+        if (isCheckedIn) buyerS1CheckedInTickets += qty;
+      }
+    }
+
+    return {
+      no: idx + 1,
+      id: ord.id,
+      order_id: ord.order_id,
+      name: ord.name,
+      email: ord.email || '-',
+      phone: ord.phone,
+      session: sess,
+      original_session_raw: ord.performance_session || ord.ticket_category || '',
+      ticket_qty: qty,
+      ticket_price: ord.ticket_price || 75000,
+      total_amount: ord.total_amount || (qty * (ord.ticket_price || 75000)),
+      status: ord.status,
+      has_transferred: ord.has_transferred || '',
+      sender_account_name: ord.sender_account_name || '',
+      checked_in: isCheckedIn,
+      checked_in_at: ord.checked_in_at || null,
+      created_at: ord.created_at,
+      payment_proof_url: ord.payment_proof_url || ''
+    };
+  });
+
+  // Perhitungan Okupansi & Kehadiran Sesi 1
+  const totalDistS1Fix = parentS1Tickets + guestS1Tickets + buyerS1Tickets;
+  const remainingS1Fix = Math.max(0, cap1 - totalDistS1Fix);
+  const occupancyRateS1 = cap1 > 0 ? Number(((totalDistS1Fix / cap1) * 100).toFixed(1)) : 0;
+  const totalAttendedS1 = parentS1CheckedInTickets + guestS1CheckedInTickets + buyerS1CheckedInTickets;
+  const attendanceRateS1 = totalDistS1Fix > 0 ? Number(((totalAttendedS1 / totalDistS1Fix) * 100).toFixed(1)) : 0;
+
+  // Perhitungan Okupansi & Kehadiran Sesi 2
+  const totalDistS2Fix = parentS2Tickets + guestS2Tickets + buyerS2Tickets;
+  const remainingS2Fix = Math.max(0, cap2 - totalDistS2Fix);
+  const occupancyRateS2 = cap2 > 0 ? Number(((totalDistS2Fix / cap2) * 100).toFixed(1)) : 0;
+  const totalAttendedS2 = parentS2CheckedInTickets + guestS2CheckedInTickets + buyerS2CheckedInTickets;
+  const attendanceRateS2 = totalDistS2Fix > 0 ? Number(((totalAttendedS2 / totalDistS2Fix) * 100).toFixed(1)) : 0;
+
+  // Grand Total
+  const capTotal = cap1 + cap2;
+  const totalDistAllFix = totalDistS1Fix + totalDistS2Fix;
+  const remainingAllFix = Math.max(0, capTotal - totalDistAllFix);
+  const occupancyRateAll = capTotal > 0 ? Number(((totalDistAllFix / capTotal) * 100).toFixed(1)) : 0;
+  const totalAttendedAll = totalAttendedS1 + totalAttendedS2;
+  const attendanceRateAll = totalDistAllFix > 0 ? Number(((totalAttendedAll / totalDistAllFix) * 100).toFixed(1)) : 0;
+
+  return {
+    event_info: {
+      event_name: settings.event_name,
+      school_name: settings.school_name,
+      event_date: settings.event_date,
+      event_time: settings.event_time,
+      event_location: settings.event_location,
+      contact_person: settings.contact_person,
+      generated_at: new Date().toISOString()
+    },
+    recap: {
+      session_1: {
+        session_name: 'Sesi 1 (Pagi: 08.00 - 12.00 WIB)',
+        capacity: cap1,
+        parents: { count: parentS1Count, tickets: parentS1Tickets, checked_in_tickets: parentS1CheckedInTickets },
+        guests: { count: guestS1Count, tickets: guestS1Tickets, checked_in_tickets: guestS1CheckedInTickets },
+        buyers: {
+          orders_verified: buyerS1Orders,
+          tickets_verified: buyerS1Tickets,
+          revenue_verified: buyerS1Revenue,
+          orders_pending: buyerPendingS1Orders,
+          tickets_pending: buyerPendingS1Tickets,
+          revenue_pending: buyerPendingS1Revenue,
+          total_orders: buyerS1Orders + buyerPendingS1Orders,
+          total_tickets: buyerS1Tickets + buyerPendingS1Tickets,
+          checked_in_tickets: buyerS1CheckedInTickets
+        },
+        total_distributed: totalDistS1Fix,
+        remaining_seats: remainingS1Fix,
+        occupancy_rate: occupancyRateS1,
+        total_attended: totalAttendedS1,
+        attendance_rate: attendanceRateS1
+      },
+      session_2: {
+        session_name: 'Sesi 2 (Siang: 13.00 - 16.00 WIB)',
+        capacity: cap2,
+        parents: { count: parentS2Count, tickets: parentS2Tickets, checked_in_tickets: parentS2CheckedInTickets },
+        guests: { count: guestS2Count, tickets: guestS2Tickets, checked_in_tickets: guestS2CheckedInTickets },
+        buyers: {
+          orders_verified: buyerS2Orders,
+          tickets_verified: buyerS2Tickets,
+          revenue_verified: buyerS2Revenue,
+          orders_pending: buyerPendingS2Orders,
+          tickets_pending: buyerPendingS2Tickets,
+          revenue_pending: buyerPendingS2Revenue,
+          total_orders: buyerS2Orders + buyerPendingS2Orders,
+          total_tickets: buyerS2Tickets + buyerPendingS2Tickets,
+          checked_in_tickets: buyerS2CheckedInTickets
+        },
+        total_distributed: totalDistS2Fix,
+        remaining_seats: remainingS2Fix,
+        occupancy_rate: occupancyRateS2,
+        total_attended: totalAttendedS2,
+        attendance_rate: attendanceRateS2
+      },
+      grand_total: {
+        capacity: capTotal,
+        parents: {
+          count: parentS1Count + parentS2Count,
+          tickets: parentS1Tickets + parentS2Tickets,
+          checked_in_tickets: parentS1CheckedInTickets + parentS2CheckedInTickets
+        },
+        guests: {
+          count: guestS1Count + guestS2Count,
+          tickets: guestS1Tickets + guestS2Tickets,
+          checked_in_tickets: guestS1CheckedInTickets + guestS2CheckedInTickets
+        },
+        buyers: {
+          orders_verified: buyerS1Orders + buyerS2Orders,
+          tickets_verified: buyerS1Tickets + buyerS2Tickets,
+          revenue_verified: buyerS1Revenue + buyerS2Revenue,
+          orders_pending: buyerPendingS1Orders + buyerPendingS2Orders,
+          tickets_pending: buyerPendingS1Tickets + buyerPendingS2Tickets,
+          revenue_pending: buyerPendingS1Revenue + buyerPendingS2Revenue,
+          total_orders: buyerS1Orders + buyerS2Orders + buyerPendingS1Orders + buyerPendingS2Orders,
+          total_tickets: buyerS1Tickets + buyerS2Tickets + buyerPendingS1Tickets + buyerPendingS2Tickets,
+          checked_in_tickets: buyerS1CheckedInTickets + buyerS2CheckedInTickets
+        },
+        total_distributed: totalDistAllFix,
+        remaining_seats: remainingAllFix,
+        occupancy_rate: occupancyRateAll,
+        total_attended: totalAttendedAll,
+        attendance_rate: attendanceRateAll
+      }
+    },
+    buyers: buyerDetails,
+    parents: parentRows.map(p => ({
+      invitation_code: p.invitation_code,
+      name: p.name,
+      class_grade: p.class_grade,
+      session: p.session,
+      ticket_qty: p.ticket_qty,
+      is_swapped: p.is_swapped === 1,
+      swap_notes: p.swap_notes || '',
+      checked_in: p.checked_in === 1,
+      checked_in_at: p.checked_in_at
+    })),
+    guests: guestRows.map(g => ({
+      invitation_code: g.invitation_code,
+      name: g.name,
+      institution: g.institution || '',
+      session: g.session,
+      ticket_qty: g.ticket_qty,
+      phone: g.phone || '',
+      checked_in: g.checked_in === 1,
+      checked_in_at: g.checked_in_at
+    }))
+  };
+}
+
+// API: Laporan Hasil Penjualan Tiket, Okupansi & Kehadiran (JSON)
+app.get('/api/reports/sales-occupancy', (req, res) => {
+  try {
+    const reportData = getSalesOccupancyReportData();
+    res.json({
+      success: true,
+      data: reportData
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// API: Export Laporan Hasil Penjualan Tiket ke CSV / Excel
+app.get('/api/reports/sales-occupancy/export-csv', (req, res) => {
+  try {
+    const data = getSalesOccupancyReportData();
+    const info = data.event_info;
+    const r = data.recap;
+
+    let csv = '\uFEFF'; // UTF-8 BOM
+    csv += `"${info.event_name}"\n`;
+    csv += `"${info.school_name} - ${info.event_date} (${info.event_time})"\n`;
+    csv += `"Lokasi: ${info.event_location} | Kontak: ${info.contact_person}"\n`;
+    csv += `"Laporan Digenerate Pada: ${new Date(info.generated_at).toLocaleString('id-ID')}"\n\n`;
+
+    // 1. Matriks Okupansi & Kehadiran
+    csv += `"=== RINGKASAN OKUPANSI & KEHADIRAN PER SESI ==="\n`;
+    csv += `"Kategori Tiket / Indikator","Sesi 1 (Pagi)","Sesi 2 (Siang)","Grand Total","Keterangan Aturan"\n`;
+    csv += `"1. Tiket Orang Tua Siswa (Kelas 7, 8, 9)","${r.session_1.parents.tickets} Tiket (${r.session_1.parents.checked_in_tickets} Hadir)","${r.session_2.parents.tickets} Tiket (${r.session_2.parents.checked_in_tickets} Hadir)","${r.grand_total.parents.tickets} Tiket (${r.grand_total.parents.checked_in_tickets} Hadir)","2 tiket/orang tua siswa"\n`;
+    csv += `"2. Tiket Tamu Undangan Kehormatan","${r.session_1.guests.tickets} Tiket (${r.session_1.guests.checked_in_tickets} Hadir)","${r.session_2.guests.tickets} Tiket (${r.session_2.guests.checked_in_tickets} Hadir)","${r.grand_total.guests.tickets} Tiket (${r.grand_total.guests.checked_in_tickets} Hadir)","Tamu VIP & dinas"\n`;
+    csv += `"3. Tiket yang Dibeli Lunas (Verified)","${r.session_1.buyers.tickets_verified} Tiket (Rp ${r.session_1.buyers.revenue_verified.toLocaleString('id-ID')})","${r.session_2.buyers.tickets_verified} Tiket (Rp ${r.session_2.buyers.revenue_verified.toLocaleString('id-ID')})","${r.grand_total.buyers.tickets_verified} Tiket (Rp ${r.grand_total.buyers.revenue_verified.toLocaleString('id-ID')})","Pembayaran terverifikasi mutasi bank"\n`;
+    csv += `"   * Tiket Pembelian Pending (Menunggu)","${r.session_1.buyers.tickets_pending} Tiket","${r.session_2.buyers.tickets_pending} Tiket","${r.grand_total.buyers.tickets_pending} Tiket","Menunggu pengecekan bukti transfer"\n`;
+    csv += `"TOTAL TIKET TERDISTRIBUSI (TERISI FIX)","${r.session_1.total_distributed} Tiket","${r.session_2.total_distributed} Tiket","${r.grand_total.total_distributed} Tiket","Ortu + Tamu + Pembeli Lunas"\n`;
+    csv += `"TOTAL KAPASITAS AUDITORIUM","${r.session_1.capacity} Kursi","${r.session_2.capacity} Kursi","${r.grand_total.capacity} Kursi","Kapasitas gedung"\n`;
+    csv += `"SISA KURSI TERSEDIA SAAT INI","${r.session_1.remaining_seats} Kursi","${r.session_2.remaining_seats} Kursi","${r.grand_total.remaining_seats} Kursi","Sisa kursi kosong siap dijual"\n`;
+    csv += `"PERSENTASE OKUPANSI AUDITORIUM","${r.session_1.occupancy_rate}%","${r.session_2.occupancy_rate}%","${r.grand_total.occupancy_rate}%","Tingkat keterisian kursi"\n`;
+    csv += `"TOTAL KEHADIRAN GATE (CEK-IN)","${r.session_1.total_attended} Tiket Hadir","${r.session_2.total_attended} Tiket Hadir","${r.grand_total.total_attended} Tiket Hadir","Jumlah orang hadir di lokasi"\n`;
+    csv += `"TINGKAT KEHADIRAN (ATTENDANCE RATE)","${r.session_1.attendance_rate}%","${r.session_2.attendance_rate}%","${r.grand_total.attendance_rate}%","Persentase kehadiran vs terdistribusi"\n\n`;
+
+    // 2. Data Rincian Tiket yang Dibeli
+    csv += `"=== DATA RINCIAN TIKET YANG DIBELI ==="\n`;
+    csv += `"No","No. Pesanan (Order ID)","Nama Pembeli","Email","No. WhatsApp","Sesi Pertunjukan","Jumlah Tiket (Pax)","Total Nominal (Rp)","Status Pembayaran","Status Cek-in","Waktu Cek-in","Tanggal Pemesanan"\n`;
+
+    for (const b of data.buyers) {
+      const checkinStr = b.checked_in
+        ? `Sudah Hadir (${b.checked_in_at ? new Date(b.checked_in_at).toLocaleString('id-ID') : '-'})`
+        : 'Belum Hadir';
+      const checkinTime = b.checked_in_at ? new Date(b.checked_in_at).toLocaleString('id-ID') : '-';
+      const orderDate = b.created_at ? new Date(b.created_at).toLocaleString('id-ID') : '-';
+
+      csv += [
+        b.no,
+        `"${b.order_id}"`,
+        `"${b.name.replace(/"/g, '""')}"`,
+        `"${b.email.replace(/"/g, '""')}"`,
+        `"'${b.phone}"`, // prefix with apostrophe for Excel
+        `"${b.session}"`,
+        b.ticket_qty,
+        b.total_amount,
+        `"${b.status.toUpperCase()}"`,
+        `"${checkinStr}"`,
+        `"${checkinTime}"`,
+        `"${orderDate}"`
+      ].join(',') + '\n';
+    }
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="laporan-penjualan-okupansi-regina-pacis.csv"');
+    res.send(csv);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -762,6 +1088,101 @@ app.post('/api/sync/vault', (req, res) => {
       success: true,
       message: 'Vault tersinkronisasi!',
       data: updatedVault
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// In-Memory Device Sync Storage (with TTL of 48 hours)
+const deviceSyncTokens = new Map();
+
+function cleanupExpiredTokens() {
+  const now = Date.now();
+  for (const [key, item] of deviceSyncTokens.entries()) {
+    if (item.expiresAt < now) {
+      deviceSyncTokens.delete(key);
+    }
+  }
+}
+setInterval(cleanupExpiredTokens, 300000);
+
+// Endpoint: Generate Device Sync Link & QR Code
+app.post('/api/sync/device-link/create', async (req, res) => {
+  try {
+    const clientVault = req.body && req.body.vault ? req.body.vault : getVaultState();
+    if (clientVault && typeof clientVault === 'object') {
+      applyVaultSync(clientVault);
+    }
+
+    const token = crypto.randomBytes(16).toString('hex');
+    const pin = String(Math.floor(100000 + Math.random() * 900000));
+    const expiresAt = Date.now() + 48 * 60 * 60 * 1000; // 48 hours
+
+    const payload = {
+      vault: getVaultState(),
+      settings: getSettings(),
+      expiresAt
+    };
+
+    deviceSyncTokens.set(token, payload);
+    deviceSyncTokens.set(`pin_${pin}`, payload);
+
+    const host = req.get('host');
+    const protocol = req.protocol === 'https' || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+    const syncUrl = `${protocol}://${host}/?sync_token=${token}`;
+
+    const qrDataUrl = await QRCode.toDataURL(syncUrl, {
+      width: 320,
+      margin: 2,
+      color: { dark: '#1e1b4b', light: '#ffffff' }
+    });
+
+    res.json({
+      success: true,
+      token,
+      pin,
+      sync_url: syncUrl,
+      qr_code: qrDataUrl,
+      expires_in: '48 Jam'
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Endpoint: Claim Device Sync Link / PIN on mobile phone or other device
+app.get('/api/sync/device-link/claim', (req, res) => {
+  try {
+    const { token, pin } = req.query;
+    let payload = null;
+
+    if (token && deviceSyncTokens.has(token)) {
+      payload = deviceSyncTokens.get(token);
+    } else if (pin && deviceSyncTokens.has(`pin_${String(pin).trim()}`)) {
+      payload = deviceSyncTokens.get(`pin_${String(pin).trim()}`);
+    }
+
+    if (!payload) {
+      // Fallback: return authoritative current server state directly
+      return res.json({
+        success: true,
+        is_fallback: true,
+        message: 'Menggunakan data cadangan server terkini',
+        data: {
+          vault: getVaultState(),
+          settings: getSettings()
+        }
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Data perangkat berhasil disinkronkan!',
+      data: {
+        vault: payload.vault,
+        settings: payload.settings
+      }
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

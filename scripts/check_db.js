@@ -1,0 +1,10 @@
+const { db, getSettings } = require('../database');
+console.log('Tables:', db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all());
+console.log('Orders count:', db.prepare('SELECT count(*) as c FROM orders').get());
+console.log('Orders by session:', db.prepare('SELECT performance_session, count(*) as c, sum(ticket_qty) as total_tickets FROM orders GROUP BY performance_session').all());
+console.log('Sample orders:', db.prepare('SELECT order_id, name, email, phone, ticket_qty, performance_session, status, checked_in, checked_in_at FROM orders LIMIT 10').all());
+console.log('Invitations count:', db.prepare('SELECT count(*) as c FROM invitations').get());
+console.log('Invitations by type:', db.prepare('SELECT type, count(*) as c, sum(ticket_qty) as total_tickets FROM invitations GROUP BY type').all());
+console.log('Invitations by type & session:', db.prepare('SELECT type, session, count(*) as c, sum(ticket_qty) as total_tickets FROM invitations GROUP BY type, session').all());
+console.log('Checkins count:', db.prepare('SELECT count(*) as c FROM checkins_log').get());
+console.log('Settings:', getSettings());
