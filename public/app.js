@@ -321,6 +321,7 @@ function switchTab(tabId) {
     loadCapacityRecap();
   }
   if (tabId === 'recap') {
+    document.body.dataset.activeReport = activeMainReport;
     loadReportData();
   }
 
@@ -3212,14 +3213,115 @@ async function handleUrlDeviceSync() {
 }
 
 // ==========================================
-// LAPORAN RESMI HASIL PENJUALAN, OKUPANSI & KEHADIRAN
+// PUSAT LAPORAN RESMI & DOKUMEN CETAK A4
 // ==========================================
 let currentReportData = null;
-let currentReportCategory = 'buyers';
+let activeMainReport = 'tickets'; // 'tickets' or 'finance'
+
+function switchMainReport(reportType) {
+  activeMainReport = reportType;
+  document.body.dataset.activeReport = reportType;
+
+  const btnTickets = document.getElementById('subtab-report-tickets');
+  const btnFinance = document.getElementById('subtab-report-finance');
+  const viewTickets = document.getElementById('report-view-tickets');
+  const viewFinance = document.getElementById('report-view-finance');
+  const btnExport = document.getElementById('btn-export-csv-active');
+  const lblExport = document.getElementById('btn-export-csv-label');
+  const lblPrint = document.getElementById('btn-print-active-label');
+
+  if (reportType === 'tickets') {
+    if (btnTickets) {
+      btnTickets.className = 'p-4 rounded-2xl border-2 border-indigo-600 bg-indigo-50/70 text-left transition relative flex items-start gap-3.5 shadow-xs';
+      const iconBox = btnTickets.querySelector('.w-10');
+      if (iconBox) iconBox.className = 'w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center flex-shrink-0';
+      const badge = btnTickets.querySelector('.px-2');
+      if (badge) badge.classList.remove('hidden');
+    }
+    if (btnFinance) {
+      btnFinance.className = 'p-4 rounded-2xl border-2 border-slate-200 bg-white hover:border-slate-300 text-left transition relative flex items-start gap-3.5';
+      const iconBox = btnFinance.querySelector('.w-10');
+      if (iconBox) iconBox.className = 'w-10 h-10 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center flex-shrink-0';
+      const badge = btnFinance.querySelector('.px-2');
+      if (badge) badge.classList.add('hidden');
+    }
+    if (viewTickets) viewTickets.classList.remove('hidden');
+    if (viewFinance) viewFinance.classList.add('hidden');
+    if (btnExport) btnExport.href = '/api/reports/tickets/export-csv';
+    if (lblExport) lblExport.textContent = 'Download CSV Tiket';
+    if (lblPrint) lblPrint.textContent = 'Cetak Laporan Tiket (A4 PDF)';
+  } else {
+    if (btnFinance) {
+      btnFinance.className = 'p-4 rounded-2xl border-2 border-indigo-600 bg-indigo-50/70 text-left transition relative flex items-start gap-3.5 shadow-xs';
+      const iconBox = btnFinance.querySelector('.w-10');
+      if (iconBox) iconBox.className = 'w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center flex-shrink-0';
+      let badge = btnFinance.querySelector('.px-2');
+      if (!badge) {
+        const titleContainer = btnFinance.querySelector('.flex.items-center.gap-2');
+        if (titleContainer) {
+          titleContainer.innerHTML += `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-600 text-white">Aktif</span>`;
+        }
+      } else {
+        badge.classList.remove('hidden');
+      }
+    }
+    if (btnTickets) {
+      btnTickets.className = 'p-4 rounded-2xl border-2 border-slate-200 bg-white hover:border-slate-300 text-left transition relative flex items-start gap-3.5';
+      const iconBox = btnTickets.querySelector('.w-10');
+      if (iconBox) iconBox.className = 'w-10 h-10 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center flex-shrink-0';
+      const badge = btnTickets.querySelector('.px-2');
+      if (badge) badge.classList.add('hidden');
+    }
+    if (viewFinance) viewFinance.classList.remove('hidden');
+    if (viewTickets) viewTickets.classList.add('hidden');
+    if (btnExport) btnExport.href = '/api/reports/finance/export-csv';
+    if (lblExport) lblExport.textContent = 'Download CSV Keuangan';
+    if (lblPrint) lblPrint.textContent = 'Cetak Laporan Keuangan (A4 PDF)';
+  }
+
+  if (window.lucide) lucide.createIcons();
+}
+
+function printActiveReport() {
+  printReport(activeMainReport);
+}
+
+function printReport(type) {
+  document.body.classList.remove('print-mode-tickets', 'print-mode-finance');
+  document.body.classList.add(`print-mode-${type}`);
+
+  const now = new Date();
+  const timeStr = now.toLocaleDateString('id-ID', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+  }) + ' • Pukul ' + now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB';
+  const dateStr = now.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+
+  if (type === 'finance') {
+    const elTime = document.getElementById('finance-print-timestamp');
+    if (elTime) elTime.textContent = `Waktu Generate / Cetak: ${timeStr}`;
+    const elSign = document.getElementById('finance-signature-date');
+    if (elSign) elSign.textContent = dateStr;
+  } else {
+    const elTime = document.getElementById('tickets-print-timestamp');
+    if (elTime) elTime.textContent = `Waktu Generate / Cetak: ${timeStr}`;
+    const elSign = document.getElementById('tickets-signature-date');
+    if (elSign) elSign.textContent = dateStr;
+  }
+
+  setTimeout(() => {
+    window.print();
+  }, 100);
+}
+
+window.addEventListener('afterprint', () => {
+  document.body.classList.remove('print-mode-tickets', 'print-mode-finance');
+});
+
+function printOfficialReport() {
+  printActiveReport();
+}
 
 async function loadReportData() {
-  const kpiContainer = document.getElementById('report-kpi-cards');
-  
   try {
     const res = await fetch('/api/reports/sales-occupancy');
     const json = await res.json();
@@ -3227,550 +3329,438 @@ async function loadReportData() {
 
     currentReportData = json.data;
 
-    // Update print headers and signatures
     const now = new Date();
-    const formattedTimestamp = now.toLocaleDateString('id-ID', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
+    const timeStr = now.toLocaleDateString('id-ID', {
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
     }) + ' • Pukul ' + now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB';
-    
-    const printTimeEl = document.getElementById('print-report-timestamp');
-    if (printTimeEl) {
-      printTimeEl.textContent = `Waktu Generate Laporan: ${formattedTimestamp}`;
-    }
+    const dateStr = now.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
 
-    const printSignEl = document.getElementById('print-signature-date');
-    if (printSignEl) {
-      printSignEl.textContent = now.toLocaleDateString('id-ID', {
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric'
-      });
-    }
+    const elTime1 = document.getElementById('tickets-print-timestamp');
+    if (elTime1) elTime1.textContent = `Waktu Generate / Cetak: ${timeStr}`;
+    const elSign1 = document.getElementById('tickets-signature-date');
+    if (elSign1) elSign1.textContent = dateStr;
 
-    renderReportKpiCards(currentReportData.recap);
-    renderReportMatrix(currentReportData.recap);
-    filterReportTables();
+    const elTime2 = document.getElementById('finance-print-timestamp');
+    if (elTime2) elTime2.textContent = `Waktu Generate / Cetak: ${timeStr}`;
+    const elSign2 = document.getElementById('finance-signature-date');
+    if (elSign2) elSign2.textContent = dateStr;
+
+    renderTicketsReport(currentReportData);
+    renderFinanceReport(currentReportData);
   } catch (err) {
     console.error('Error loadReportData:', err);
-    if (kpiContainer) {
-      kpiContainer.innerHTML = `<div class="col-span-full py-8 text-center text-red-500 text-xs">Gagal memuat laporan: ${escapeHtml(err.message)}</div>`;
-    }
+    showToast('Gagal memuat data laporan: ' + err.message, 'error');
   }
 }
 
-function renderReportKpiCards(recap) {
-  const container = document.getElementById('report-kpi-cards');
-  if (!container || !recap) return;
+// ------------------------------------------
+// 1. RENDER LAPORAN TIKET & OKUPANSI
+// ------------------------------------------
+function renderTicketsReport(data) {
+  if (!data || !data.recap) return;
+  const recap = data.recap;
 
-  const s1 = recap.session_1;
-  const s2 = recap.session_2;
-  const gt = recap.grand_total;
+  // 1. KPI Cards
+  const kpiContainer = document.getElementById('tickets-kpi-cards');
+  if (kpiContainer) {
+    const s1 = recap.session_1;
+    const s2 = recap.session_2;
+    const gt = recap.grand_total;
 
-  const cards = [
-    {
-      title: 'Sesi 1 (Pagi: 08.00 - 12.00)',
-      badgeColor: 'bg-indigo-100 text-indigo-800 border-indigo-200',
-      data: s1,
-      capacity: s1.capacity
-    },
-    {
-      title: 'Sesi 2 (Siang: 13.00 - 16.00)',
-      badgeColor: 'bg-purple-100 text-purple-800 border-purple-200',
-      data: s2,
-      capacity: s2.capacity
-    },
-    {
-      title: 'Grand Total Keseluruhan',
-      badgeColor: 'bg-emerald-100 text-emerald-800 border-emerald-200',
-      data: gt,
-      capacity: gt.capacity,
-      isTotal: true
+    const cards = [
+      {
+        sessionTitle: 'Sesi 1 (Pagi: 08.00 - 12.00)',
+        badgeClass: 'bg-indigo-100 text-indigo-900 border-indigo-200',
+        d: s1,
+        isTotal: false
+      },
+      {
+        sessionTitle: 'Sesi 2 (Siang: 13.00 - 16.00)',
+        badgeClass: 'bg-purple-100 text-purple-900 border-purple-200',
+        d: s2,
+        isTotal: false
+      },
+      {
+        sessionTitle: 'Grand Total Keseluruhan',
+        badgeClass: 'bg-emerald-100 text-emerald-900 border-emerald-300 font-extrabold',
+        d: gt,
+        isTotal: true
+      }
+    ];
+
+    kpiContainer.innerHTML = cards.map(c => {
+      const d = c.d;
+      const occ = d.occupancy_rate || 0;
+      const att = d.attendance_rate || 0;
+
+      return `
+        <div class="p-4 rounded-2xl border ${c.isTotal ? 'border-emerald-300 bg-emerald-50/20' : 'border-slate-200 bg-white'} text-xs space-y-2.5">
+          <div class="flex items-center justify-between">
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg text-[11px] font-bold ${c.badgeClass} border">
+              <i data-lucide="${c.isTotal ? 'award' : 'sparkles'}" class="w-3.5 h-3.5"></i>
+              ${escapeHtml(c.sessionTitle)}
+            </span>
+            <span class="text-[11px] font-bold text-slate-500">Kapasitas: ${d.capacity} Kursi</span>
+          </div>
+
+          <div>
+            <div class="flex items-baseline justify-between mb-1">
+              <div class="flex items-baseline gap-1">
+                <span class="text-2xl font-black text-slate-900">${d.total_distributed}</span>
+                <span class="text-[11px] font-bold text-slate-400">/ ${d.capacity} Pax</span>
+              </div>
+              <strong class="text-xs font-black ${occ >= 90 ? 'text-rose-600' : 'text-indigo-700'}">${occ}% Okupansi</strong>
+            </div>
+            <div class="w-full bg-slate-100 rounded-full h-2 overflow-hidden border border-slate-200">
+              <div class="h-2 rounded-full ${occ >= 90 ? 'bg-rose-500' : occ >= 70 ? 'bg-indigo-600' : 'bg-emerald-500'}" style="width: ${Math.min(occ, 100)}%"></div>
+            </div>
+          </div>
+
+          <div class="flex justify-between items-center text-[11px] pt-0.5 border-t border-slate-100">
+            <span class="text-slate-500">Sisa Kursi: <strong class="text-slate-900 font-bold">${d.remaining_seats} Kursi</strong></span>
+            <span class="text-emerald-700 font-semibold">Tersedia Dijual</span>
+          </div>
+
+          <div class="p-2 rounded-xl bg-slate-50 border border-slate-200 text-[10px] space-y-1">
+            <div class="flex justify-between items-center">
+              <span class="text-slate-500 font-medium">Presensi Gate:</span>
+              <strong class="text-slate-800">${d.total_attended} / ${d.total_distributed} Hadir (${att}%)</strong>
+            </div>
+            <div class="grid grid-cols-3 gap-1 text-center pt-1 border-t border-slate-200/60 text-[9.5px]">
+              <span class="bg-indigo-50/80 rounded py-0.5 text-indigo-900 font-semibold">Ortu: ${d.parents.tickets}</span>
+              <span class="bg-purple-50/80 rounded py-0.5 text-purple-900 font-semibold">Tamu: ${d.guests.tickets}</span>
+              <span class="bg-emerald-50/80 rounded py-0.5 text-emerald-900 font-semibold">Beli: ${d.buyers ? d.buyers.tickets_verified : 0}</span>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  // 2. Matrix Table
+  const tbodyMatrix = document.getElementById('tickets-matrix-tbody');
+  if (tbodyMatrix) {
+    const s1 = recap.session_1;
+    const s2 = recap.session_2;
+    const gt = recap.grand_total;
+
+    const rows = [
+      {
+        label: 'Total Kapasitas Kursi Auditorium',
+        icon: 'armchair',
+        s1: `${s1.capacity} Kursi`,
+        s2: `${s2.capacity} Kursi`,
+        total: `${gt.capacity} Kursi`,
+        note: 'Ditetapkan panitia (350 kursi per sesi)',
+        highlight: 'bg-slate-50/60 font-semibold'
+      },
+      {
+        label: '1. Tiket Orang Tua Siswa (Kelas 7, 8, 9)',
+        icon: 'users',
+        s1: `<strong class="text-slate-900">${s1.parents.tickets} Tiket</strong> <span class="text-[10px] text-slate-500">(${s1.parents.checked_in_tickets} Hadir)</span>`,
+        s2: `<strong class="text-slate-900">${s2.parents.tickets} Tiket</strong> <span class="text-[10px] text-slate-500">(${s2.parents.checked_in_tickets} Hadir)</span>`,
+        total: `<strong class="text-slate-900">${gt.parents.tickets} Tiket</strong> <span class="text-[10px] text-slate-500">(${gt.parents.checked_in_tickets} Hadir)</span>`,
+        note: '2 tiket/siswa (Kls 7 Sesi 1; Kls 8 & 9 Sesi 2)',
+        highlight: ''
+      },
+      {
+        label: '2. Tiket Tamu Undangan Kehormatan',
+        icon: 'award',
+        s1: `<strong class="text-slate-900">${s1.guests.tickets} Tiket</strong> <span class="text-[10px] text-slate-500">(${s1.guests.checked_in_tickets} Hadir)</span>`,
+        s2: `<strong class="text-slate-900">${s2.guests.tickets} Tiket</strong> <span class="text-[10px] text-slate-500">(${s2.guests.checked_in_tickets} Hadir)</span>`,
+        total: `<strong class="text-slate-900">${gt.guests.tickets} Tiket</strong> <span class="text-[10px] text-slate-500">(${gt.guests.checked_in_tickets} Hadir)</span>`,
+        note: 'Yayasan, dinas pendidikan, rohaniwan & kepala sekolah mitra',
+        highlight: ''
+      },
+      {
+        label: '3. Tiket Terjual Lunas (Verified)',
+        icon: 'check-circle-2',
+        s1: `<strong class="text-emerald-700">${s1.buyers.tickets_verified} Tiket</strong> <span class="text-[10px] text-slate-500 block">Rp ${formatRupiah(s1.buyers.revenue_verified)}</span>`,
+        s2: `<strong class="text-emerald-700">${s2.buyers.tickets_verified} Tiket</strong> <span class="text-[10px] text-slate-500 block">Rp ${formatRupiah(s2.buyers.revenue_verified)}</span>`,
+        total: `<strong class="text-emerald-700">${gt.buyers.tickets_verified} Tiket</strong> <span class="text-[10px] text-slate-500 block">Rp ${formatRupiah(gt.buyers.revenue_verified)}</span>`,
+        note: 'Pembeli umum via google sheet yang terkonfirmasi lunas',
+        highlight: ''
+      },
+      {
+        label: '   * Tiket Pembelian Pending (Menunggu)',
+        icon: 'clock',
+        s1: `<span class="text-amber-700 font-medium">${s1.buyers.tickets_pending} Tiket</span>`,
+        s2: `<span class="text-amber-700 font-medium">${s2.buyers.tickets_pending} Tiket</span>`,
+        total: `<span class="text-amber-700 font-medium">${gt.buyers.tickets_pending} Tiket</span>`,
+        note: 'Menunggu konfirmasi bukti transfer panitia',
+        highlight: 'italic text-slate-500'
+      },
+      {
+        label: 'TOTAL TIKET TERDISTRIBUSI (TERISI FIX)',
+        icon: 'check-square-2',
+        s1: `<strong class="text-indigo-900 font-black text-sm">${s1.total_distributed} Tiket</strong>`,
+        s2: `<strong class="text-indigo-900 font-black text-sm">${s2.total_distributed} Tiket</strong>`,
+        total: `<strong class="text-indigo-950 font-black text-sm">${gt.total_distributed} Tiket</strong>`,
+        note: 'Ortu + Tamu + Pembeli Lunas (Total kursi terisi pasti)',
+        highlight: 'bg-indigo-50/80 font-bold border-y-2 border-indigo-200'
+      },
+      {
+        label: 'SISA KURSI TERSEDIA SAAT INI (KOSONG)',
+        icon: 'pie-chart',
+        s1: `<span class="px-2 py-0.5 rounded-full text-xs font-black ${s1.remaining_seats > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}">${s1.remaining_seats} Kursi</span>`,
+        s2: `<span class="px-2 py-0.5 rounded-full text-xs font-black ${s2.remaining_seats > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}">${s2.remaining_seats} Kursi</span>`,
+        total: `<span class="px-2 py-0.5 rounded-full text-xs font-black ${gt.remaining_seats > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}">${gt.remaining_seats} Kursi</span>`,
+        note: 'Sisa kursi kosong siap dialokasikan / dijual bebas',
+        highlight: 'bg-emerald-50/40 font-bold'
+      },
+      {
+        label: 'PERSENTASE OKUPANSI KURSI AUDITORIUM',
+        icon: 'percent',
+        s1: `<strong class="text-xs ${s1.occupancy_rate >= 90 ? 'text-rose-600' : 'text-indigo-800'}">${s1.occupancy_rate}%</strong>`,
+        s2: `<strong class="text-xs ${s2.occupancy_rate >= 90 ? 'text-rose-600' : 'text-indigo-800'}">${s2.occupancy_rate}%</strong>`,
+        total: `<strong class="text-xs font-black text-indigo-950">${gt.occupancy_rate}%</strong>`,
+        note: 'Rasio keterisian: (Tiket Terdistribusi / Kapasitas) * 100',
+        highlight: 'bg-slate-50 font-bold'
+      },
+      {
+        label: 'Total Kehadiran Gate (Cek-in Presensi)',
+        icon: 'scan',
+        s1: `<span class="font-bold text-slate-800">${s1.total_attended} Hadir</span>`,
+        s2: `<span class="font-bold text-slate-800">${s2.total_attended} Hadir</span>`,
+        total: `<span class="font-bold text-slate-900">${gt.total_attended} Hadir</span>`,
+        note: 'Jumlah penonton fisik yang sudah scan tiket di pintu masuk',
+        highlight: ''
+      },
+      {
+        label: 'Tingkat Kehadiran Penonton (Attendance Rate)',
+        icon: 'user-check',
+        s1: `<span class="font-bold text-emerald-700">${s1.attendance_rate}%</span>`,
+        s2: `<span class="font-bold text-emerald-700">${s2.attendance_rate}%</span>`,
+        total: `<span class="font-black text-emerald-800">${gt.attendance_rate}%</span>`,
+        note: 'Rasio kehadiran: (Total Hadir / Tiket Terdistribusi) * 100',
+        highlight: 'bg-emerald-50/60 font-bold'
+      }
+    ];
+
+    tbodyMatrix.innerHTML = rows.map(r => `
+      <tr class="${r.highlight || 'hover:bg-slate-50/70'} transition">
+        <td class="py-2 px-3 text-slate-900">
+          <span class="inline-flex items-center gap-1.5 font-bold">
+            <i data-lucide="${r.icon}" class="w-3.5 h-3.5 text-indigo-600 flex-shrink-0"></i>
+            <span>${escapeHtml(r.label)}</span>
+          </span>
+        </td>
+        <td class="py-2 px-3 text-center">${r.s1}</td>
+        <td class="py-2 px-3 text-center">${r.s2}</td>
+        <td class="py-2 px-3 text-center bg-indigo-50/30 font-bold">${r.total}</td>
+        <td class="py-2 px-3 text-[10.5px] text-slate-500">${escapeHtml(r.note)}</td>
+      </tr>
+    `).join('');
+  }
+
+  // 3. Class breakdown
+  const tbodyClasses = document.getElementById('tickets-class-breakdown-tbody');
+  if (tbodyClasses && data.class_breakdown) {
+    if (data.class_breakdown.length === 0) {
+      tbodyClasses.innerHTML = `<tr><td colspan="5" class="py-4 text-center text-slate-400 text-xs">Belum ada data orang tua per kelas.</td></tr>`;
+    } else {
+      tbodyClasses.innerHTML = data.class_breakdown.map(c => `
+        <tr class="hover:bg-slate-50/80 transition text-xs">
+          <td class="py-1.5 px-3 font-bold text-slate-900">Kelas ${escapeHtml(c.class_grade)}</td>
+          <td class="py-1.5 px-3">
+            <span class="px-2 py-0.5 rounded text-[10px] font-bold ${c.session === 'Sesi 2' ? 'bg-purple-100 text-purple-800' : 'bg-indigo-100 text-indigo-800'}">
+              ${escapeHtml(c.session)}
+            </span>
+          </td>
+          <td class="py-1.5 px-3 text-center font-semibold text-slate-700">${c.student_count} Siswa</td>
+          <td class="py-1.5 px-3 text-center font-bold text-slate-900">${c.ticket_count} Tiket</td>
+          <td class="py-1.5 px-3 text-center text-slate-600">${c.checked_in_tickets} Hadir</td>
+        </tr>
+      `).join('');
     }
-  ];
+  }
 
-  container.innerHTML = cards.map(c => {
-    const d = c.data;
-    const occRate = d.occupancy_rate || 0;
-    const attRate = d.attendance_rate || 0;
-    const revenue = d.buyers ? (d.buyers.revenue_verified || 0) : 0;
+  // Guest badges
+  const guestBadge = document.getElementById('tickets-guest-total-badge');
+  if (guestBadge) guestBadge.textContent = `${recap.grand_total.guests.tickets} Tiket`;
+  const guestS1El = document.getElementById('tickets-guest-s1-count');
+  if (guestS1El) guestS1El.textContent = `${recap.session_1.guests.tickets} Tiket (${recap.session_1.guests.checked_in_tickets} Hadir)`;
+  const guestS2El = document.getElementById('tickets-guest-s2-count');
+  if (guestS2El) guestS2El.textContent = `${recap.session_2.guests.tickets} Tiket (${recap.session_2.guests.checked_in_tickets} Hadir)`;
+
+  // Swapped parents summary
+  const swappedEl = document.getElementById('tickets-swapped-parents-summary');
+  if (swappedEl && data.parents) {
+    const swappedCount = data.parents.filter(p => p.is_swapped).length;
+    if (swappedCount > 0) {
+      swappedEl.innerHTML = `Tercatat sebanyak <strong>${swappedCount} orang tua siswa</strong> telah melakukan penukaran sesi (tukar sesi 1 & 2) dengan persetujuan panitia. Seluruh kuota dan sisa kursi di atas telah otomatis disesuaikan secara akurat.`;
+    } else {
+      swappedEl.textContent = `Seluruh orang tua siswa saat ini terdaftar pada sesi standar (Kelas 7 Sesi 1 Pagi; Kelas 8 & 9 Sesi 2 Siang). Fitur tukar sesi aktif pada dashboard jika ada orang tua yang ingin berpindah.`;
+    }
+  }
+
+  if (window.lucide) lucide.createIcons();
+}
+
+// ------------------------------------------
+// 2. RENDER LAPORAN KEUANGAN PENJUALAN TIKET
+// ------------------------------------------
+function renderFinanceReport(data) {
+  if (!data || !data.finance) return;
+  const f = data.finance;
+
+  // KPI Cards
+  const kpiEl = document.getElementById('finance-kpi-cards');
+  if (kpiEl) {
+    kpiEl.innerHTML = `
+      <div class="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs">
+        <span class="text-emerald-700 text-[10px] uppercase font-bold block">Total Omset Lunas (Verified)</span>
+        <strong class="text-emerald-950 text-lg font-black block mt-0.5">Rp ${formatRupiah(f.verified_revenue)}</strong>
+        <span class="text-[10px] text-emerald-800 font-semibold block mt-0.5">${f.verified_tickets} Tiket Lunas (${f.verified_orders} Pesanan)</span>
+      </div>
+
+      <div class="p-3.5 rounded-2xl bg-indigo-50 border border-indigo-200 text-xs">
+        <span class="text-indigo-700 text-[10px] uppercase font-bold block">Pendapatan Sesi 1 (Pagi)</span>
+        <strong class="text-indigo-950 text-lg font-black block mt-0.5">Rp ${formatRupiah(f.session_1.revenue)}</strong>
+        <span class="text-[10px] text-indigo-800 font-semibold block mt-0.5">${f.session_1.tickets} Tiket (${f.session_1.orders} Pesanan)</span>
+      </div>
+
+      <div class="p-3.5 rounded-2xl bg-purple-50 border border-purple-200 text-xs">
+        <span class="text-purple-700 text-[10px] uppercase font-bold block">Pendapatan Sesi 2 (Siang)</span>
+        <strong class="text-purple-950 text-lg font-black block mt-0.5">Rp ${formatRupiah(f.session_2.revenue)}</strong>
+        <span class="text-[10px] text-purple-800 font-semibold block mt-0.5">${f.session_2.tickets} Tiket (${f.session_2.orders} Pesanan)</span>
+      </div>
+
+      <div class="p-3.5 rounded-2xl bg-slate-100 border border-slate-200 text-xs">
+        <span class="text-slate-500 text-[10px] uppercase font-bold block">Rekening Penampung BCA</span>
+        <strong class="text-slate-900 text-sm font-black font-mono block mt-0.5">0678025685</strong>
+        <span class="text-[10px] text-slate-600 block mt-0.5 truncate">a.n. Muhammad Fadilah</span>
+      </div>
+    `;
+  }
+
+  filterFinanceTable();
+  if (window.lucide) lucide.createIcons();
+}
+
+function filterFinanceTable() {
+  if (!currentReportData || !currentReportData.buyers) return;
+
+  const sessionFilter = document.getElementById('finance-filter-session')?.value || 'all';
+  const statusFilter = document.getElementById('finance-filter-status')?.value || 'all';
+  const search = (document.getElementById('finance-search-input')?.value || '').toLowerCase().trim();
+  const countEl = document.getElementById('finance-count-label');
+  const tbody = document.getElementById('finance-buyers-tbody');
+  const tfoot = document.getElementById('finance-table-tfoot');
+
+  let list = currentReportData.buyers;
+
+  if (sessionFilter !== 'all') {
+    list = list.filter(b => b.session === sessionFilter);
+  }
+  if (statusFilter !== 'all') {
+    list = list.filter(b => b.status === statusFilter);
+  }
+  if (search) {
+    list = list.filter(b => {
+      return (b.name && b.name.toLowerCase().includes(search)) ||
+             (b.order_id && b.order_id.toLowerCase().includes(search)) ||
+             (b.phone && b.phone.toLowerCase().includes(search)) ||
+             (b.email && b.email.toLowerCase().includes(search)) ||
+             (b.sender_account_name && b.sender_account_name.toLowerCase().includes(search));
+    });
+  }
+
+  if (countEl) countEl.textContent = `Menampilkan ${list.length} pesanan pembeli`;
+
+  if (!tbody) return;
+
+  if (list.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="11" class="text-center py-8 text-slate-400 text-xs">Tidak ada data pembeli yang cocok dengan filter.</td></tr>`;
+    if (tfoot) tfoot.innerHTML = '';
+    return;
+  }
+
+  let totalTickets = 0;
+  let totalVerifiedNominal = 0;
+  let totalPendingNominal = 0;
+
+  tbody.innerHTML = list.map((b, idx) => {
+    const isLunas = b.status === 'verified';
+    const qty = b.ticket_qty || 1;
+    const amount = b.total_amount || 0;
+    const price = b.ticket_price || 75000;
+
+    totalTickets += qty;
+    if (isLunas) {
+      totalVerifiedNominal += amount;
+    } else {
+      totalPendingNominal += amount;
+    }
+
+    const cleanPhone = (b.phone || '').replace(/[^0-9]/g, '');
+    const waUrl = cleanPhone ? (cleanPhone.startsWith('0') ? '62' + cleanPhone.slice(1) : cleanPhone) : '';
 
     return `
-      <div class="bg-white p-5 rounded-3xl border ${c.isTotal ? 'border-emerald-200 bg-emerald-50/20' : 'border-slate-200'} shadow-sm relative flex flex-col justify-between hover:border-indigo-200 transition">
-        <div>
-          <div class="flex items-center justify-between mb-3">
-            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold ${c.badgeColor} border">
-              <i data-lucide="${c.isTotal ? 'award' : 'sparkles'}" class="w-3.5 h-3.5"></i>
-              ${c.title}
+      <tr class="hover:bg-slate-50/80 transition text-xs">
+        <td class="py-2 px-2.5 text-center text-slate-400 font-semibold">${idx + 1}</td>
+        <td class="py-2 px-3 font-mono font-bold text-indigo-900 whitespace-nowrap">${escapeHtml(b.order_id)}</td>
+        <td class="py-2 px-3 font-bold text-slate-900">${escapeHtml(b.name)}</td>
+        <td class="py-2 px-3 font-semibold text-slate-700 whitespace-nowrap">
+          ${waUrl ? `
+            <a href="https://wa.me/${waUrl}" target="_blank" class="hover:text-emerald-600 inline-flex items-center gap-1">
+              <i data-lucide="phone" class="w-3 h-3 text-emerald-600"></i>
+              <span>${escapeHtml(b.phone)}</span>
+            </a>
+          ` : escapeHtml(b.phone || '-')}
+        </td>
+        <td class="py-2 px-3 text-slate-600 text-[11px]">${escapeHtml(b.email || '-')}</td>
+        <td class="py-2 px-3 text-center whitespace-nowrap">
+          <span class="px-2 py-0.5 rounded text-[10px] font-bold ${b.session === 'Sesi 2' ? 'bg-purple-100 text-purple-800' : 'bg-indigo-100 text-indigo-800'}">
+            ${escapeHtml(b.session)}
+          </span>
+        </td>
+        <td class="py-2 px-3 text-center font-black text-slate-900 text-xs whitespace-nowrap">${qty} Pax</td>
+        <td class="py-2 px-3 text-right text-slate-600 whitespace-nowrap">Rp ${formatRupiah(price)}</td>
+        <td class="py-2 px-3 text-right font-black text-slate-900 whitespace-nowrap">Rp ${formatRupiah(amount)}</td>
+        <td class="py-2 px-3 text-center whitespace-nowrap">
+          ${isLunas ? `
+            <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+              ✓ Lunas
             </span>
-            <span class="text-xs font-bold text-slate-500">Kapasitas: ${d.capacity} Kursi</span>
-          </div>
-
-          <!-- Total Distributed & Occupancy -->
-          <div class="mt-2 mb-3">
-            <div class="flex items-baseline justify-between mb-1">
-              <div class="flex items-baseline gap-1.5">
-                <span class="text-3xl font-black text-slate-900">${d.total_distributed}</span>
-                <span class="text-xs font-bold text-slate-400">/ ${d.capacity} Pax</span>
-              </div>
-              <span class="text-xs font-extrabold ${occRate >= 90 ? 'text-rose-600' : 'text-indigo-600'}">${occRate}% Okupansi</span>
-            </div>
-            <div class="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
-              <div class="h-2.5 rounded-full transition-all duration-500 ${occRate >= 90 ? 'bg-rose-500' : occRate >= 70 ? 'bg-indigo-600' : 'bg-emerald-500'}" style="width: ${Math.min(occRate, 100)}%"></div>
-            </div>
-            <div class="flex justify-between text-[11px] text-slate-500 mt-1">
-              <span>Sisa Kursi: <strong class="text-slate-800">${d.remaining_seats} Kursi</strong></span>
-              <span class="text-emerald-700 font-semibold">Tersedia untuk Dijual</span>
-            </div>
-          </div>
-
-          <!-- Attendance Rate -->
-          <div class="p-3 rounded-2xl bg-slate-50 border border-slate-100 mb-3 space-y-1.5">
-            <div class="flex justify-between items-center text-xs">
-              <span class="text-slate-500 font-semibold flex items-center gap-1">
-                <i data-lucide="check-circle-2" class="w-3.5 h-3.5 text-emerald-600"></i>
-                Kehadiran Gate (Cek-in)
-              </span>
-              <span class="font-bold text-slate-900">${d.total_attended} / ${d.total_distributed} Hadir (${attRate}%)</span>
-            </div>
-            <div class="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
-              <div class="bg-emerald-600 h-1.5 rounded-full transition-all duration-500" style="width: ${Math.min(attRate, 100)}%"></div>
-            </div>
-          </div>
-
-          <!-- Breakdown Mini Badges -->
-          <div class="grid grid-cols-3 gap-1.5 text-center text-[10px] mb-3">
-            <div class="p-2 rounded-xl bg-indigo-50 border border-indigo-100">
-              <span class="text-indigo-600 block font-bold">Ortu</span>
-              <strong class="text-indigo-950 text-xs font-black">${d.parents.tickets}</strong>
-              <span class="text-slate-400 block text-[9px]">(${d.parents.checked_in_tickets} Hadir)</span>
-            </div>
-            <div class="p-2 rounded-xl bg-purple-50 border border-purple-100">
-              <span class="text-purple-600 block font-bold">Tamu</span>
-              <strong class="text-purple-950 text-xs font-black">${d.guests.tickets}</strong>
-              <span class="text-slate-400 block text-[9px]">(${d.guests.checked_in_tickets} Hadir)</span>
-            </div>
-            <div class="p-2 rounded-xl bg-emerald-50 border border-emerald-100">
-              <span class="text-emerald-600 block font-bold">Pembeli</span>
-              <strong class="text-emerald-950 text-xs font-black">${d.buyers ? d.buyers.tickets_verified : 0}</strong>
-              <span class="text-slate-400 block text-[9px]">(${d.buyers ? d.buyers.checked_in_tickets : 0} Hadir)</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="border-t border-slate-100 pt-3 flex items-center justify-between text-xs">
-          <div>
-            <span class="text-slate-400 text-[10px] block">Pendapatan Tiket Lunas</span>
-            <strong class="text-emerald-700 text-sm font-black">Rp ${formatRupiah(revenue)}</strong>
-          </div>
-          ${d.buyers && d.buyers.tickets_pending > 0 ? `
-            <div class="text-right">
-              <span class="text-amber-500 text-[10px] block">Pending</span>
-              <span class="text-amber-700 text-xs font-bold">${d.buyers.tickets_pending} Tiket</span>
-            </div>
-          ` : ''}
-        </div>
-      </div>
+          ` : `
+            <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">
+              ⏳ Pending
+            </span>
+          `}
+        </td>
+        <td class="py-2 px-3 text-slate-600 text-[11px]">
+          ${escapeHtml(b.sender_account_name || '-')}
+        </td>
+      </tr>
     `;
   }).join('');
 
-  if (window.lucide) lucide.createIcons();
-}
-
-function renderReportMatrix(recap) {
-  const tbody = document.getElementById('report-matrix-tbody');
-  const grandCapBadge = document.getElementById('report-matrix-grand-cap');
-  if (!tbody || !recap) return;
-
-  const s1 = recap.session_1;
-  const s2 = recap.session_2;
-  const gt = recap.grand_total;
-
-  if (grandCapBadge) {
-    grandCapBadge.textContent = `Total Kapasitas: ${gt.capacity} Kursi`;
-  }
-
-  const rows = [
-    {
-      label: '1. Tiket Orang Tua Siswa (Kelas 7, 8, 9)',
-      icon: 'users',
-      s1: `${s1.parents.tickets} Tiket <span class="text-[10px] text-slate-400 block font-normal">(${s1.parents.checked_in_tickets} Hadir)</span>`,
-      s2: `${s2.parents.tickets} Tiket <span class="text-[10px] text-slate-400 block font-normal">(${s2.parents.checked_in_tickets} Hadir)</span>`,
-      total: `${gt.parents.tickets} Tiket <span class="text-[10px] text-slate-400 block font-normal">(${gt.parents.checked_in_tickets} Hadir)</span>`,
-      note: 'Alokasi 2 tiket/orang tua (Kls 7 S1, Kls 8 & 9 S2, mendukung tukar sesi)',
-      highlight: false
-    },
-    {
-      label: '2. Tiket Tamu Undangan Kehormatan',
-      icon: 'award',
-      s1: `${s1.guests.tickets} Tiket <span class="text-[10px] text-slate-400 block font-normal">(${s1.guests.checked_in_tickets} Hadir)</span>`,
-      s2: `${s2.guests.tickets} Tiket <span class="text-[10px] text-slate-400 block font-normal">(${s2.guests.checked_in_tickets} Hadir)</span>`,
-      total: `${gt.guests.tickets} Tiket <span class="text-[10px] text-slate-400 block font-normal">(${gt.guests.checked_in_tickets} Hadir)</span>`,
-      note: 'Undangan kehormatan yayasan, dinas, dan mitra sekolah',
-      highlight: false
-    },
-    {
-      label: '3. Tiket yang Dibeli Lunas (Verified)',
-      icon: 'badge-check',
-      s1: `<strong class="text-emerald-700">${s1.buyers.tickets_verified} Tiket</strong><span class="text-[10px] text-slate-500 block">Rp ${formatRupiah(s1.buyers.revenue_verified)}</span>`,
-      s2: `<strong class="text-emerald-700">${s2.buyers.tickets_verified} Tiket</strong><span class="text-[10px] text-slate-500 block">Rp ${formatRupiah(s2.buyers.revenue_verified)}</span>`,
-      total: `<strong class="text-emerald-700">${gt.buyers.tickets_verified} Tiket</strong><span class="text-[10px] text-slate-500 block">Rp ${formatRupiah(gt.buyers.revenue_verified)}</span>`,
-      note: 'Pembeli umum yang pembayarannya telah terverifikasi lunas',
-      highlight: false
-    },
-    {
-      label: '   * Tiket Pembelian Pending (Menunggu)',
-      icon: 'clock',
-      s1: `<span class="text-amber-700 font-semibold">${s1.buyers.tickets_pending} Tiket</span>`,
-      s2: `<span class="text-amber-700 font-semibold">${s2.buyers.tickets_pending} Tiket</span>`,
-      total: `<span class="text-amber-700 font-semibold">${gt.buyers.tickets_pending} Tiket</span>`,
-      note: 'Menunggu konfirmasi mutasi bank / bukti transfer',
-      highlight: false,
-      isSub: true
-    },
-    {
-      label: 'TOTAL TIKET TERDISTRIBUSI (TERISI FIX)',
-      icon: 'check-square-2',
-      s1: `<strong class="text-indigo-900 text-sm font-black">${s1.total_distributed} Tiket</strong>`,
-      s2: `<strong class="text-indigo-900 text-sm font-black">${s2.total_distributed} Tiket</strong>`,
-      total: `<strong class="text-indigo-950 text-sm font-black">${gt.total_distributed} Tiket</strong>`,
-      note: 'Total kursi terisi pasti (Ortu + Tamu + Pembeli Lunas)',
-      highlight: 'bg-indigo-50/70 border-y border-indigo-100 font-bold'
-    },
-    {
-      label: 'TOTAL KAPASITAS AUDITORIUM',
-      icon: 'armchair',
-      s1: `<span class="font-bold text-slate-700">${s1.capacity} Kursi</span>`,
-      s2: `<span class="font-bold text-slate-700">${s2.capacity} Kursi</span>`,
-      total: `<span class="font-bold text-slate-900">${gt.capacity} Kursi</span>`,
-      note: 'Ditetapkan panitia di tab Kapasitas Kursi',
-      highlight: false
-    },
-    {
-      label: 'SISA KURSI TERSEDIA SAAT INI',
-      icon: 'pie-chart',
-      s1: `<span class="px-2.5 py-1 rounded-full text-xs font-extrabold ${s1.remaining_seats > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}">${s1.remaining_seats} Kursi</span>`,
-      s2: `<span class="px-2.5 py-1 rounded-full text-xs font-extrabold ${s2.remaining_seats > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}">${s2.remaining_seats} Kursi</span>`,
-      total: `<span class="px-2.5 py-1 rounded-full text-xs font-extrabold ${gt.remaining_seats > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}">${gt.remaining_seats} Kursi</span>`,
-      note: 'Sisa kuota kursi yang masih dapat dijual ke penonton umum',
-      highlight: 'bg-emerald-50/40'
-    },
-    {
-      label: 'PERSENTASE OKUPANSI AUDITORIUM',
-      icon: 'percent',
-      s1: `<span class="font-bold ${s1.occupancy_rate >= 90 ? 'text-rose-600' : 'text-indigo-700'}">${s1.occupancy_rate}%</span>`,
-      s2: `<span class="font-bold ${s2.occupancy_rate >= 90 ? 'text-rose-600' : 'text-indigo-700'}">${s2.occupancy_rate}%</span>`,
-      total: `<span class="font-black text-indigo-900">${gt.occupancy_rate}%</span>`,
-      note: 'Rasio keterisian: (Tiket Terdistribusi / Kapasitas Kursi) * 100',
-      highlight: false
-    },
-    {
-      label: 'TOTAL KEHADIRAN GATE (CEK-IN)',
-      icon: 'scan',
-      s1: `<strong class="text-slate-800">${s1.total_attended} Hadir</strong>`,
-      s2: `<strong class="text-slate-800">${s2.total_attended} Hadir</strong>`,
-      total: `<strong class="text-slate-900">${gt.total_attended} Hadir</strong>`,
-      note: 'Penonton yang sudah scan QR Code / Barcode tiket di pintu masuk',
-      highlight: false
-    },
-    {
-      label: 'TINGKAT KEHADIRAN (ATTENDANCE RATE)',
-      icon: 'user-check',
-      s1: `<span class="font-bold text-emerald-700">${s1.attendance_rate}%</span>`,
-      s2: `<span class="font-bold text-emerald-700">${s2.attendance_rate}%</span>`,
-      total: `<span class="font-black text-emerald-800">${gt.attendance_rate}%</span>`,
-      note: 'Rasio kehadiran: (Total Hadir / Tiket Terdistribusi) * 100',
-      highlight: 'bg-emerald-50/60 font-bold'
-    }
-  ];
-
-  tbody.innerHTML = rows.map(r => `
-    <tr class="${r.highlight || 'hover:bg-slate-50/80'} transition text-xs">
-      <td class="py-3 px-4 ${r.isSub ? 'pl-8 text-slate-500 italic' : 'font-bold text-slate-900'}">
-        <span class="inline-flex items-center gap-2">
-          <i data-lucide="${r.icon}" class="w-3.5 h-3.5 ${r.isSub ? 'text-amber-500' : 'text-indigo-600'} flex-shrink-0"></i>
-          <span>${escapeHtml(r.label)}</span>
-        </span>
-      </td>
-      <td class="py-3 px-4 text-center font-medium">${r.s1}</td>
-      <td class="py-3 px-4 text-center font-medium">${r.s2}</td>
-      <td class="py-3 px-4 text-center font-bold">${r.total}</td>
-      <td class="py-3 px-4 text-slate-500 text-[11px]">${escapeHtml(r.note)}</td>
-    </tr>
-  `).join('');
-
-  if (window.lucide) lucide.createIcons();
-}
-
-function switchReportCategory(category) {
-  currentReportCategory = category;
-
-  const tabs = ['buyers', 'parents', 'guests'];
-  tabs.forEach(t => {
-    const btn = document.getElementById(`report-subtab-${t}`);
-    const panel = document.getElementById(`report-panel-${t}`);
-    if (btn) {
-      if (t === category) {
-        btn.className = 'px-3.5 py-1.5 rounded-xl text-xs font-bold transition bg-white text-indigo-900 shadow-sm';
-      } else {
-        btn.className = 'px-3.5 py-1.5 rounded-xl text-xs font-semibold text-slate-600 hover:text-slate-900 transition';
-      }
-    }
-    if (panel) {
-      panel.classList.toggle('hidden', t !== category);
-    }
-  });
-
-  const payFilter = document.getElementById('report-filter-payment');
-  if (payFilter) {
-    payFilter.classList.toggle('hidden', category !== 'buyers');
-  }
-
-  filterReportTables();
-}
-
-function filterReportTables() {
-  if (!currentReportData) return;
-
-  const sessionFilter = document.getElementById('report-filter-session')?.value || 'all';
-  const checkinFilter = document.getElementById('report-filter-checkin')?.value || 'all';
-  const paymentFilter = document.getElementById('report-filter-payment')?.value || 'all';
-  const search = (document.getElementById('report-search-input')?.value || '').toLowerCase().trim();
-  const countEl = document.getElementById('report-table-count');
-
-  if (currentReportCategory === 'buyers') {
-    let list = currentReportData.buyers || [];
-
-    if (sessionFilter !== 'all') {
-      list = list.filter(b => b.session === sessionFilter);
-    }
-    if (checkinFilter !== 'all') {
-      const wantChecked = checkinFilter === '1';
-      list = list.filter(b => b.checked_in === wantChecked);
-    }
-    if (paymentFilter !== 'all') {
-      list = list.filter(b => b.status === paymentFilter);
-    }
-    if (search) {
-      list = list.filter(b => {
-        return (b.name && b.name.toLowerCase().includes(search)) ||
-               (b.order_id && b.order_id.toLowerCase().includes(search)) ||
-               (b.email && b.email.toLowerCase().includes(search)) ||
-               (b.phone && b.phone.toLowerCase().includes(search)) ||
-               (b.sender_account_name && b.sender_account_name.toLowerCase().includes(search));
-      });
-    }
-
-    if (countEl) countEl.textContent = `Menampilkan ${list.length} data pembeli`;
-
-    const tbody = document.getElementById('report-buyers-tbody');
-    if (!tbody) return;
-
-    if (list.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="10" class="text-center py-8 text-slate-400 text-xs">Tidak ada data pembeli yang cocok dengan filter.</td></tr>`;
-      return;
-    }
-
-    tbody.innerHTML = list.map((b, idx) => {
-      const isLunas = b.status === 'verified';
-      const isHadir = b.checked_in === true;
-      const hadirTime = b.checked_in_at ? new Date(b.checked_in_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '';
-      const cleanPhone = (b.phone || '').replace(/[^0-9]/g, '');
-      const waUrl = cleanPhone ? (cleanPhone.startsWith('0') ? '62' + cleanPhone.slice(1) : cleanPhone) : '';
-
-      return `
-        <tr class="hover:bg-slate-50/80 transition text-xs">
-          <td class="py-3 px-3 text-slate-400 font-semibold">${idx + 1}</td>
-          <td class="py-3 px-3 font-mono font-bold text-indigo-900 whitespace-nowrap">${escapeHtml(b.order_id)}</td>
-          <td class="py-3 px-3">
-            <strong class="text-slate-900 block text-xs">${escapeHtml(b.name)}</strong>
-            ${b.sender_account_name ? `<span class="text-[10px] text-slate-400 block truncate max-w-[150px]">Rek: ${escapeHtml(b.sender_account_name)}</span>` : ''}
-          </td>
-          <td class="py-3 px-3 text-slate-600">${escapeHtml(b.email || '-')}</td>
-          <td class="py-3 px-3 font-semibold text-slate-700 whitespace-nowrap">
-            ${waUrl ? `
-              <a href="https://wa.me/${waUrl}" target="_blank" class="hover:text-emerald-600 inline-flex items-center gap-1">
-                <i data-lucide="phone" class="w-3 h-3 text-emerald-600"></i>
-                <span>${escapeHtml(b.phone)}</span>
-              </a>
-            ` : escapeHtml(b.phone || '-')}
-          </td>
-          <td class="py-3 px-3 whitespace-nowrap">
-            <span class="px-2.5 py-1 rounded-xl text-[10px] font-bold ${b.session === 'Sesi 2' ? 'bg-purple-100 text-purple-800' : 'bg-indigo-100 text-indigo-800'}">
-              ${escapeHtml(b.session)}
-            </span>
-          </td>
-          <td class="py-3 px-3 text-center font-black text-slate-900 text-sm whitespace-nowrap">${b.ticket_qty} Pax</td>
-          <td class="py-3 px-3 text-right font-bold text-indigo-950 whitespace-nowrap">Rp ${formatRupiah(b.total_amount)}</td>
-          <td class="py-3 px-3 text-center whitespace-nowrap">
-            ${isLunas ? `
-              <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
-                <i data-lucide="check" class="w-3 h-3"></i> Lunas
-              </span>
-            ` : `
-              <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">
-                <i data-lucide="clock" class="w-3 h-3"></i> Pending
-              </span>
-            `}
-          </td>
-          <td class="py-3 px-3 text-center whitespace-nowrap">
-            ${isHadir ? `
-              <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-600 text-white text-[10px] font-bold shadow-xs">
-                <i data-lucide="check-check" class="w-3 h-3"></i> Hadir ${hadirTime ? `(${hadirTime})` : ''}
-              </span>
-            ` : `
-              <span class="text-slate-400 text-[11px] font-medium">Belum Hadir</span>
-            `}
-          </td>
-        </tr>
-      `;
-    }).join('');
-
-  } else if (currentReportCategory === 'parents') {
-    let list = currentReportData.parents || [];
-
-    if (sessionFilter !== 'all') {
-      list = list.filter(p => p.session === sessionFilter);
-    }
-    if (checkinFilter !== 'all') {
-      const wantChecked = checkinFilter === '1';
-      list = list.filter(p => p.checked_in === wantChecked);
-    }
-    if (search) {
-      list = list.filter(p => {
-        return (p.name && p.name.toLowerCase().includes(search)) ||
-               (p.invitation_code && p.invitation_code.toLowerCase().includes(search)) ||
-               (p.class_grade && p.class_grade.toLowerCase().includes(search));
-      });
-    }
-
-    if (countEl) countEl.textContent = `Menampilkan ${list.length} data orang tua`;
-
-    const tbody = document.getElementById('report-parents-tbody');
-    if (!tbody) return;
-
-    if (list.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="8" class="text-center py-8 text-slate-400 text-xs">Tidak ada data orang tua yang cocok dengan filter.</td></tr>`;
-      return;
-    }
-
-    tbody.innerHTML = list.map((p, idx) => {
-      const isHadir = p.checked_in === true;
-      const hadirTime = p.checked_in_at ? new Date(p.checked_in_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '';
-
-      return `
-        <tr class="hover:bg-slate-50/80 transition text-xs">
-          <td class="py-3 px-3 text-slate-400 font-semibold">${idx + 1}</td>
-          <td class="py-3 px-3 font-mono font-bold text-indigo-900 whitespace-nowrap">${escapeHtml(p.invitation_code)}</td>
-          <td class="py-3 px-3 font-bold text-slate-900">${escapeHtml(p.name)}</td>
-          <td class="py-3 px-3 text-center">
-            <span class="px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 font-bold text-[10px]">${escapeHtml(p.class_grade)}</span>
-          </td>
-          <td class="py-3 px-3 whitespace-nowrap">
-            <span class="px-2.5 py-1 rounded-xl text-[10px] font-bold ${p.session === 'Sesi 2' ? 'bg-purple-100 text-purple-800' : 'bg-indigo-100 text-indigo-800'}">
-              ${escapeHtml(p.session)}
-            </span>
-          </td>
-          <td class="py-3 px-3 text-center font-bold text-slate-900">${p.ticket_qty} Tiket</td>
-          <td class="py-3 px-3">
-            ${p.is_swapped ? `
-              <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold">
-                <i data-lucide="arrow-left-right" class="w-3 h-3"></i> Berpindah Sesi
-              </span>
-              ${p.swap_notes ? `<span class="text-[10px] text-slate-400 block truncate max-w-[130px]">${escapeHtml(p.swap_notes)}</span>` : ''}
-            ` : `
-              <span class="text-slate-400 text-[10px]">Sesi Sesuai Kelas</span>
-            `}
-          </td>
-          <td class="py-3 px-3 text-center whitespace-nowrap">
-            ${isHadir ? `
-              <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-600 text-white text-[10px] font-bold shadow-xs">
-                <i data-lucide="check-check" class="w-3 h-3"></i> Hadir ${hadirTime ? `(${hadirTime})` : ''}
-              </span>
-            ` : `
-              <span class="text-slate-400 text-[11px] font-medium">Belum Hadir</span>
-            `}
-          </td>
-        </tr>
-      `;
-    }).join('');
-
-  } else if (currentReportCategory === 'guests') {
-    let list = currentReportData.guests || [];
-
-    if (sessionFilter !== 'all') {
-      list = list.filter(g => g.session === sessionFilter);
-    }
-    if (checkinFilter !== 'all') {
-      const wantChecked = checkinFilter === '1';
-      list = list.filter(g => g.checked_in === wantChecked);
-    }
-    if (search) {
-      list = list.filter(g => {
-        return (g.name && g.name.toLowerCase().includes(search)) ||
-               (g.invitation_code && g.invitation_code.toLowerCase().includes(search)) ||
-               (g.institution && g.institution.toLowerCase().includes(search)) ||
-               (g.phone && g.phone.toLowerCase().includes(search));
-      });
-    }
-
-    if (countEl) countEl.textContent = `Menampilkan ${list.length} data tamu undangan`;
-
-    const tbody = document.getElementById('report-guests-tbody');
-    if (!tbody) return;
-
-    if (list.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="8" class="text-center py-8 text-slate-400 text-xs">Tidak ada data tamu undangan yang cocok dengan filter.</td></tr>`;
-      return;
-    }
-
-    tbody.innerHTML = list.map((g, idx) => {
-      const isHadir = g.checked_in === true;
-      const hadirTime = g.checked_in_at ? new Date(g.checked_in_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '';
-
-      return `
-        <tr class="hover:bg-slate-50/80 transition text-xs">
-          <td class="py-3 px-3 text-slate-400 font-semibold">${idx + 1}</td>
-          <td class="py-3 px-3 font-mono font-bold text-indigo-900 whitespace-nowrap">${escapeHtml(g.invitation_code)}</td>
-          <td class="py-3 px-3 font-bold text-slate-900">${escapeHtml(g.name)}</td>
-          <td class="py-3 px-3 text-slate-600">${escapeHtml(g.institution || '-')}</td>
-          <td class="py-3 px-3 whitespace-nowrap">
-            <span class="px-2.5 py-1 rounded-xl text-[10px] font-bold ${g.session === 'Sesi 2' ? 'bg-purple-100 text-purple-800' : 'bg-indigo-100 text-indigo-800'}">
-              ${escapeHtml(g.session)}
-            </span>
-          </td>
-          <td class="py-3 px-3 text-center font-bold text-slate-900">${g.ticket_qty} Tiket</td>
-          <td class="py-3 px-3 text-slate-600 whitespace-nowrap">${escapeHtml(g.phone || '-')}</td>
-          <td class="py-3 px-3 text-center whitespace-nowrap">
-            ${isHadir ? `
-              <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-600 text-white text-[10px] font-bold shadow-xs">
-                <i data-lucide="check-check" class="w-3 h-3"></i> Hadir ${hadirTime ? `(${hadirTime})` : ''}
-              </span>
-            ` : `
-              <span class="text-slate-400 text-[11px] font-medium">Belum Hadir</span>
-            `}
-          </td>
-        </tr>
-      `;
-    }).join('');
+  if (tfoot) {
+    tfoot.innerHTML = `
+      <tr>
+        <td colspan="6" class="py-2.5 px-3 text-right uppercase text-[11px] font-black text-slate-700">
+          Total Ringkasan:
+        </td>
+        <td class="py-2.5 px-3 text-center text-xs font-black text-slate-900 whitespace-nowrap">
+          ${totalTickets} Pax
+        </td>
+        <td class="py-2.5 px-3 text-right text-[10px] text-slate-400">Total Lunas:</td>
+        <td class="py-2.5 px-3 text-right text-xs font-black text-emerald-700 whitespace-nowrap">
+          Rp ${formatRupiah(totalVerifiedNominal)}
+        </td>
+        <td class="py-2.5 px-3 text-center text-[10px] font-bold text-amber-700 whitespace-nowrap">
+          ${totalPendingNominal > 0 ? `(Pending: Rp ${formatRupiah(totalPendingNominal)})` : 'Lunas Semua'}
+        </td>
+        <td class="py-2.5 px-3 text-[10px] text-slate-500">
+          ${list.length} Pesanan Terfilter
+        </td>
+      </tr>
+    `;
   }
 
   if (window.lucide) lucide.createIcons();
 }
 
-function printOfficialReport() {
-  const printTimeEl = document.getElementById('print-report-timestamp');
-  const now = new Date();
-  if (printTimeEl) {
-    printTimeEl.textContent = `Waktu Cetak Laporan: ${now.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} • Pukul ${now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB`;
-  }
-  const printSignEl = document.getElementById('print-signature-date');
-  if (printSignEl) {
-    printSignEl.textContent = now.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
-  }
-  window.print();
-}
 
 

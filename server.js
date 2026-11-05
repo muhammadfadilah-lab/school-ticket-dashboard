@@ -589,6 +589,33 @@ function getSalesOccupancyReportData() {
       }
     },
     buyers: buyerDetails,
+    finance: {
+      bank_account: 'BCA 0678025685 a.n. Muhammad Fadilah',
+      verified_revenue: buyerS1Revenue + buyerS2Revenue,
+      verified_tickets: buyerS1Tickets + buyerS2Tickets,
+      verified_orders: buyerS1Orders + buyerS2Orders,
+      pending_revenue: buyerPendingS1Revenue + buyerPendingS2Revenue,
+      pending_tickets: buyerPendingS1Tickets + buyerPendingS2Tickets,
+      pending_orders: buyerPendingS1Orders + buyerPendingS2Orders,
+      session_1: {
+        revenue: buyerS1Revenue,
+        tickets: buyerS1Tickets,
+        orders: buyerS1Orders
+      },
+      session_2: {
+        revenue: buyerS2Revenue,
+        tickets: buyerS2Tickets,
+        orders: buyerS2Orders
+      }
+    },
+    class_breakdown: db.prepare(`
+      SELECT class_grade, session, COUNT(*) as student_count, COALESCE(SUM(ticket_qty), 0) as ticket_count,
+             SUM(CASE WHEN checked_in = 1 THEN ticket_qty ELSE 0 END) as checked_in_tickets
+      FROM invitations 
+      WHERE type = 'parent' 
+      GROUP BY class_grade, session 
+      ORDER BY class_grade ASC
+    `).all(),
     parents: parentRows.map(p => ({
       invitation_code: p.invitation_code,
       name: p.name,
@@ -682,6 +709,98 @@ app.get('/api/reports/sales-occupancy/export-csv', (req, res) => {
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="laporan-penjualan-okupansi-regina-pacis.csv"');
+    res.send(csv);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// API: Export Laporan Keuangan Penjualan Tiket ke CSV / Excel
+app.get('/api/reports/finance/export-csv', (req, res) => {
+  try {
+    const data = getSalesOccupancyReportData();
+    const info = data.event_info;
+    const f = data.finance;
+    const buyers = data.buyers;
+
+    let csv = '\uFEFF'; // UTF-8 BOM
+    csv += `"${info.event_name}"\n`;
+    csv += `"${info.school_name} - LAPORAN KEUANGAN PENJUALAN TIKET PERTUNJUKAN"\n`;
+    csv += `"Rekening Penampung: ${f.bank_account}"\n`;
+    csv += `"Laporan Digenerate Pada: ${new Date(info.generated_at).toLocaleString('id-ID')}"\n\n`;
+
+    csv += `"=== RINGKASAN KEUANGAN PENJUALAN TIKET ==="\n`;
+    csv += `"Indikator Keuangan","Jumlah Pesanan","Total Tiket (Pax)","Total Nominal (Rp)","Keterangan"\n`;
+    csv += `"Total Penjualan Lunas (Verified)","${f.verified_orders} Pesanan","${f.verified_tickets} Tiket","Rp ${f.verified_revenue.toLocaleString('id-ID')}","Dana sudah masuk mutasi bank"\n`;
+    csv += `" - Sesi 1 (Pagi: 08.00 - 12.00)","${f.session_1.orders} Pesanan","${f.session_1.tickets} Tiket","Rp ${f.session_1.revenue.toLocaleString('id-ID')}","Sesi pertunjukan pagi"\n`;
+    csv += `" - Sesi 2 (Siang: 13.00 - 16.00)","${f.session_2.orders} Pesanan","${f.session_2.tickets} Tiket","Rp ${f.session_2.revenue.toLocaleString('id-ID')}","Sesi pertunjukan siang"\n`;
+    csv += `"Total Penjualan Pending","${f.pending_orders} Pesanan","${f.pending_tickets} Tiket","Rp ${f.pending_revenue.toLocaleString('id-ID')}","Menunggu verifikasi bukti transfer panitia"\n\n`;
+
+    csv += `"=== DAFTAR LENGKAP PEMBELI TIKET & STATUS PEMBAYARAN ==="\n`;
+    csv += `"No","No. Pesanan (Order ID)","Nama Pembeli","Email","No. WhatsApp","Sesi Pertunjukan","Jumlah Tiket (Pax)","Harga Satuan (Rp)","Total Bayar (Rp)","Status Pembayaran","Rekening Pengirim Transfer","Tanggal Pemesanan"\n`;
+
+    for (const b of buyers) {
+      csv += [
+        b.no,
+        `"${b.order_id}"`,
+        `"${b.name.replace(/"/g, '""')}"`,
+        `"${b.email.replace(/"/g, '""')}"`,
+        `"'${b.phone}"`,
+        `"${b.session}"`,
+        b.ticket_qty,
+        b.ticket_price || 75000,
+        b.total_amount,
+        `"${b.status.toUpperCase()}"`,
+        `"${(b.sender_account_name || '-').replace(/"/g, '""')}"`,
+        `"${b.created_at ? new Date(b.created_at).toLocaleString('id-ID') : '-'}"`
+      ].join(',') + '\n';
+    }
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="laporan-keuangan-tiket-regina-pacis.csv"');
+    res.send(csv);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// API: Export Laporan Tiket & Okupansi ke CSV / Excel
+app.get('/api/reports/tickets/export-csv', (req, res) => {
+  try {
+    const data = getSalesOccupancyReportData();
+    const info = data.event_info;
+    const r = data.recap;
+
+    let csv = '\uFEFF';
+    csv += `"${info.event_name}"\n`;
+    csv += `"${info.school_name} - LAPORAN REKAPITULASI TIKET, KAPASITAS & OKUPANSI"\n`;
+    csv += `"Lokasi: ${info.event_location} | Waktu Acara: ${info.event_date} (${info.event_time})"\n`;
+    csv += `"Laporan Digenerate Pada: ${new Date(info.generated_at).toLocaleString('id-ID')}"\n\n`;
+
+    csv += `"=== MATRIKS OKUPANSI & ALOKASI KURSI AUDITORIUM ==="\n`;
+    csv += `"Kategori Tiket / Indikator","Sesi 1 (Pagi)","Sesi 2 (Siang)","Grand Total","Keterangan Aturan"\n`;
+    csv += `"Total Kapasitas Kursi Auditorium","${r.session_1.capacity} Kursi","${r.session_2.capacity} Kursi","${r.grand_total.capacity} Kursi","Kapasitas gedung"\n`;
+    csv += `"1. Tiket Orang Tua Siswa (Kelas 7, 8, 9)","${r.session_1.parents.tickets} Tiket (${r.session_1.parents.checked_in_tickets} Hadir)","${r.session_2.parents.tickets} Tiket (${r.session_2.parents.checked_in_tickets} Hadir)","${r.grand_total.parents.tickets} Tiket (${r.grand_total.parents.checked_in_tickets} Hadir)","Alokasi 2 tiket/siswa"\n`;
+    csv += `"2. Tiket Tamu Undangan Kehormatan","${r.session_1.guests.tickets} Tiket (${r.session_1.guests.checked_in_tickets} Hadir)","${r.session_2.guests.tickets} Tiket (${r.session_2.guests.checked_in_tickets} Hadir)","${r.grand_total.guests.tickets} Tiket (${r.grand_total.guests.checked_in_tickets} Hadir)","Tamu VIP & dinas"\n`;
+    csv += `"3. Tiket yang Dibeli Lunas (Verified)","${r.session_1.buyers.tickets_verified} Tiket (Rp ${r.session_1.buyers.revenue_verified.toLocaleString('id-ID')})","${r.session_2.buyers.tickets_verified} Tiket (Rp ${r.session_2.buyers.revenue_verified.toLocaleString('id-ID')})","${r.grand_total.buyers.tickets_verified} Tiket (Rp ${r.grand_total.buyers.revenue_verified.toLocaleString('id-ID')})","Pembayaran terverifikasi mutasi bank"\n`;
+    csv += `"   * Tiket Pembelian Pending","${r.session_1.buyers.tickets_pending} Tiket","${r.session_2.buyers.tickets_pending} Tiket","${r.grand_total.buyers.tickets_pending} Tiket","Menunggu pengecekan bukti transfer"\n`;
+    csv += `"TOTAL TIKET TERDISTRIBUSI (TERISI FIX)","${r.session_1.total_distributed} Tiket","${r.session_2.total_distributed} Tiket","${r.grand_total.total_distributed} Tiket","Ortu + Tamu + Pembeli Lunas"\n`;
+    csv += `"SISA KURSI TERSEDIA SAAT INI (KOSONG)","${r.session_1.remaining_seats} Kursi","${r.session_2.remaining_seats} Kursi","${r.grand_total.remaining_seats} Kursi","Sisa kursi kosong siap dijual"\n`;
+    csv += `"PERSENTASE OKUPANSI KURSI AUDITORIUM","${r.session_1.occupancy_rate}%","${r.session_2.occupancy_rate}%","${r.grand_total.occupancy_rate}%","Tingkat keterisian kursi"\n`;
+    csv += `"TOTAL KEHADIRAN GATE (CEK-IN)","${r.session_1.total_attended} Tiket Hadir","${r.session_2.total_attended} Tiket Hadir","${r.grand_total.total_attended} Tiket Hadir","Jumlah orang hadir di lokasi"\n`;
+    csv += `"TINGKAT KEHADIRAN (ATTENDANCE RATE)","${r.session_1.attendance_rate}%","${r.session_2.attendance_rate}%","${r.grand_total.attendance_rate}%","Persentase kehadiran vs terdistribusi"\n\n`;
+
+    if (data.class_breakdown && data.class_breakdown.length > 0) {
+      csv += `"=== RINCIAN TIKET ORANG TUA PER KELAS ==="\n`;
+      csv += `"Kelas","Sesi Pertunjukan","Jumlah Siswa","Total Alokasi Tiket","Jumlah Hadir di Gate"\n`;
+      for (const c of data.class_breakdown) {
+        csv += `"${c.class_grade}","${c.session}",${c.student_count},${c.ticket_count},${c.checked_in_tickets}\n`;
+      }
+      csv += '\n';
+    }
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="laporan-rekapitulasi-tiket-okupansi-regina-pacis.csv"');
     res.send(csv);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
