@@ -54,7 +54,7 @@
     @media print {
       @page {
         size: A4 portrait;
-        margin: 10mm 10mm 12mm 10mm;
+        margin: 8mm 8mm 10mm 8mm;
       }
       header, nav, #pending-alert-banner, button, a, .no-print, #toast, .modal, #btn-quick-sync, input, select, .screen-only {
         display: none !important;
@@ -62,8 +62,8 @@
       body {
         background: white !important;
         color: #0f172a !important;
-        font-size: 9.5pt !important;
-        line-height: 1.3 !important;
+        font-size: 8.5pt !important;
+        line-height: 1.25 !important;
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
       }
@@ -84,6 +84,10 @@
       }
       body.print-mode-tickets #report-view-tickets {
         display: block !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+        page-break-after: avoid !important;
+        break-after: avoid !important;
       }
       body.print-mode-tickets #report-view-finance {
         display: none !important;
@@ -97,6 +101,8 @@
       /* Fallback for direct Ctrl+P */
       body:not(.print-mode-tickets):not(.print-mode-finance)[data-active-report="tickets"] #report-view-tickets {
         display: block !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
       }
       body:not(.print-mode-tickets):not(.print-mode-finance)[data-active-report="finance"] #report-view-finance {
         display: block !important;
@@ -120,7 +126,7 @@
         page-break-inside: auto !important;
         width: 100% !important;
         border-collapse: collapse !important;
-        font-size: 8.5pt !important;
+        font-size: 8pt !important;
       }
       tr {
         page-break-inside: avoid !important;
@@ -134,7 +140,7 @@
       }
       th, td {
         border: 1px solid #cbd5e1 !important;
-        padding: 4px 6px !important;
+        padding: 3px 5px !important;
       }
       th {
         background-color: #f1f5f9 !important;
@@ -144,8 +150,13 @@
       .report-signature-block {
         page-break-inside: avoid !important;
         break-inside: avoid !important;
-        margin-top: 20px !important;
-        padding-top: 10px !important;
+        margin-top: 14px !important;
+        padding-top: 8px !important;
+      }
+      #finance-buyers-tbody td:nth-child(7),
+      #finance-table-tfoot td:nth-child(7) {
+        white-space: nowrap !important;
+        font-weight: 800 !important;
       }
     }
   </style>
@@ -1008,59 +1019,59 @@
       <!-- ============================================== -->
       <div id="report-view-tickets" class="report-view-container space-y-6">
         
-        <!-- Printable Paper Canvas Container -->
-        <div class="bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-sm print:p-0 print:border-none print:shadow-none space-y-6">
+        <!-- Printable Paper Canvas Container (Fits strictly on 1 Page A4) -->
+        <div class="bg-white p-6 sm:p-7 rounded-3xl border border-slate-200 shadow-sm print:p-0 print:border-none print:shadow-none space-y-3.5 print:space-y-2.5">
           
           <!-- Kop Surat Resmi (Selalu Muncul di Cetakan & Layar) -->
-          <div class="border-b-2 border-slate-900 pb-4 text-center">
-            <h2 class="text-xl font-black uppercase tracking-wider text-slate-900">SMP REGINA PACIS JAKARTA</h2>
-            <p class="text-xs font-bold text-slate-700 tracking-wide mt-0.5">PANITIA DRAMA MUSIKAL & PENTAS BUDAYA 2026</p>
-            <p class="text-[11px] text-slate-500">Auditorium Regina Pacis Jakarta • Jl. Palmerah Utara No. 1, Palmerah, Jakarta Barat</p>
-            <div class="mt-3 py-1.5 bg-slate-100 rounded-lg border border-slate-300">
+          <div class="border-b-2 border-slate-900 pb-2.5 text-center">
+            <h2 class="text-lg sm:text-xl font-black uppercase tracking-wider text-slate-900">SMP REGINA PACIS JAKARTA</h2>
+            <p class="text-[11px] font-bold text-slate-700 tracking-wide mt-0.5">PANITIA DRAMA MUSIKAL & PENTAS BUDAYA 2026</p>
+            <p class="text-[10px] text-slate-500">Auditorium Regina Pacis Jakarta • Jl. Palmerah Utara No. 1, Palmerah, Jakarta Barat</p>
+            <div class="mt-2 py-1 px-3 bg-slate-100 rounded-lg border border-slate-300">
               <h3 class="text-xs sm:text-sm font-black uppercase text-slate-900 tracking-wide">
                 LAPORAN REKAPITULASI TIKET, ALOKASI KURSI AUDITORIUM & OKUPANSI ACARA
               </h3>
-              <p class="text-[10px] text-slate-600 mt-0.5" id="tickets-print-timestamp">Waktu Generate Laporan: -</p>
+              <p class="text-[9.5px] text-slate-600 mt-0.5" id="tickets-print-timestamp">Waktu Generate Laporan: -</p>
             </div>
           </div>
 
-          <!-- Section 1: Ringkasan Eksekutif Kuota & Okupansi (Executive KPI) -->
-          <div class="avoid-break">
-            <div class="flex items-center justify-between mb-2.5">
+          <!-- Section 1: Ringkasan Okupansi Ringkas (Tergabung dengan Matriks 1 Halaman) -->
+          <div class="avoid-break space-y-1.5">
+            <div class="flex items-center justify-between text-[11px] font-bold text-slate-700 px-0.5">
               <h4 class="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
-                <i data-lucide="layout-grid" class="w-4 h-4 text-indigo-600"></i>
+                <i data-lucide="layout-grid" class="w-3.5 h-3.5 text-indigo-600"></i>
                 Ringkasan Okupansi Kursi per Sesi Pertunjukan
               </h4>
-              <span class="text-[11px] font-bold text-slate-500">Total Kapasitas: 700 Kursi (350 / Sesi)</span>
+              <span id="tickets-header-capacity" class="text-[10.5px] font-bold text-slate-500">Total Kapasitas: 700 Kursi (350 / Sesi)</span>
             </div>
             
-            <div id="tickets-kpi-cards" class="grid grid-cols-1 md:grid-cols-3 gap-3.5">
-              <!-- Rendered dynamically by loadReportData() -->
-              <div class="col-span-full py-8 text-center text-slate-400 text-xs">
+            <div id="tickets-kpi-cards" class="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <!-- Rendered dynamically as 3 compact cards -->
+              <div class="col-span-full py-4 text-center text-slate-400 text-xs">
                 Memuat ringkasan tiket dan okupansi kursi...
               </div>
             </div>
           </div>
 
-          <!-- Section 2: Tabel Matriks Konsolidasi Tiket & Okupansi -->
-          <div class="avoid-break space-y-2">
-            <div class="flex items-center justify-between">
+          <!-- Section 2: Tabel Matriks Konsolidasi Kuota, Alokasi & Okupansi Kursi -->
+          <div class="avoid-break space-y-1.5">
+            <div class="flex items-center justify-between px-0.5">
               <h4 class="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
-                <i data-lucide="table-properties" class="w-4 h-4 text-indigo-600"></i>
+                <i data-lucide="table-properties" class="w-3.5 h-3.5 text-indigo-600"></i>
                 Tabel Matriks Konsolidasi Kuota, Alokasi & Okupansi Kursi
               </h4>
               <span class="text-[10px] text-slate-500 italic">*Alokasi Ortu: 2 Tiket/Siswa (Kls 7 S1, Kls 8 & 9 S2)</span>
             </div>
 
-            <div class="overflow-x-auto border border-slate-200 rounded-2xl print:border-slate-400">
-              <table class="w-full text-left text-xs">
+            <div class="overflow-x-auto border border-slate-300 rounded-xl print:border-slate-400">
+              <table class="w-full text-left text-xs print:text-[8pt]">
                 <thead class="bg-slate-100 text-slate-800 uppercase tracking-wider border-b border-slate-300 font-bold">
                   <tr>
-                    <th class="py-2.5 px-3">Komponen / Kategori Tiket</th>
-                    <th class="py-2.5 px-3 text-center">Sesi 1 (Pagi)</th>
-                    <th class="py-2.5 px-3 text-center">Sesi 2 (Siang)</th>
-                    <th class="py-2.5 px-3 text-center bg-indigo-50/50">Grand Total</th>
-                    <th class="py-2.5 px-3">Keterangan / Kebijakan Alokasi</th>
+                    <th class="py-1.5 px-2.5">Komponen / Kategori Tiket</th>
+                    <th class="py-1.5 px-2 text-center w-28 whitespace-nowrap">Sesi 1 (Pagi)</th>
+                    <th class="py-1.5 px-2 text-center w-28 whitespace-nowrap">Sesi 2 (Siang)</th>
+                    <th class="py-1.5 px-2 text-center w-28 whitespace-nowrap bg-indigo-50/70 font-black">Grand Total</th>
+                    <th class="py-1.5 px-2.5">Keterangan / Kebijakan Alokasi</th>
                   </tr>
                 </thead>
                 <tbody id="tickets-matrix-tbody" class="divide-y divide-slate-200">
@@ -1068,92 +1079,102 @@
                 </tbody>
               </table>
             </div>
+            
+            <p class="text-[9.5px] text-slate-500 italic px-1 leading-tight">
+              *Kebijakan Alokasi: Orang tua siswa berhak atas 2 tiket per siswa (Kelas 7 Sesi 1 Pagi; Kelas 8 & 9 Sesi 2 Siang). Tiket berbayar adalah tiket tambahan dari formulir pemesanan. Sisa kursi kosong dialokasikan untuk tiket penjualan on-the-spot.
+            </p>
           </div>
 
-          <!-- Section 3: Rincian Pembagian Kelas Siswa & Tamu Undangan -->
-          <div class="avoid-break space-y-2">
-            <h4 class="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
-              <i data-lucide="users" class="w-4 h-4 text-indigo-600"></i>
-              Rincian Alokasi Tiket Orang Tua Siswa per Kelas & Tamu Undangan
-            </h4>
-
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <!-- Tabel Kelas Siswa -->
-              <div class="border border-slate-200 rounded-2xl overflow-hidden print:border-slate-400">
-                <div class="bg-slate-100 px-3 py-2 border-b border-slate-200 font-bold text-[11px] text-slate-800">
-                  Distribusi Tiket Orang Tua Siswa (Kelas 7, 8, 9)
-                </div>
-                <table class="w-full text-left text-xs">
-                  <thead class="bg-slate-50 text-slate-600 text-[10px] uppercase font-bold border-b border-slate-200">
-                    <tr>
-                      <th class="py-2 px-3">Kelas</th>
-                      <th class="py-2 px-3">Sesi Ditugaskan</th>
-                      <th class="py-2 px-3 text-center">Jumlah Siswa</th>
-                      <th class="py-2 px-3 text-center">Alokasi Tiket</th>
-                      <th class="py-2 px-3 text-center">Kehadiran Gate</th>
-                    </tr>
-                  </thead>
-                  <tbody id="tickets-class-breakdown-tbody" class="divide-y divide-slate-100">
-                    <!-- Rendered dynamically -->
-                  </tbody>
-                </table>
-              </div>
-
-              <!-- Box Ringkasan Tamu Undangan & Catatan Tukar Sesi -->
-              <div class="space-y-3">
-                <div class="border border-slate-200 rounded-2xl p-3.5 bg-slate-50/80 print:bg-white print:border-slate-400 text-xs space-y-2">
-                  <div class="flex items-center justify-between font-bold text-slate-900 border-b border-slate-200 pb-1.5">
-                    <span class="flex items-center gap-1.5">
-                      <i data-lucide="award" class="w-4 h-4 text-amber-600"></i>
-                      Alokasi Tiket Tamu Undangan Kehormatan
-                    </span>
-                    <span id="tickets-guest-total-badge" class="px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-bold text-[10px]">
-                      0 Tiket
-                    </span>
-                  </div>
-                  <p class="text-[11px] text-slate-600 leading-relaxed">
-                    Tamu undangan kehormatan terdiri dari Pengurus Yayasan, Perwakilan Dinas Pendidikan, Kepala Sekolah mitra, serta Tokoh Rohaniwan. Alokasi tiket tamu undangan telah dialokasikan pada kursi VIP Sesi 1 dan Sesi 2.
-                  </p>
-                  <div class="grid grid-cols-2 gap-2 text-center text-[10px] pt-1">
-                    <div class="p-2 bg-white rounded-xl border border-slate-200 font-semibold">
-                      <span class="text-slate-400 block">Sesi 1 (Pagi)</span>
-                      <strong class="text-slate-900 text-xs" id="tickets-guest-s1-count">0 Tiket</strong>
-                    </div>
-                    <div class="p-2 bg-white rounded-xl border border-slate-200 font-semibold">
-                      <span class="text-slate-400 block">Sesi 2 (Siang)</span>
-                      <strong class="text-slate-900 text-xs" id="tickets-guest-s2-count">0 Tiket</strong>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="border border-slate-200 rounded-2xl p-3.5 bg-indigo-50/50 print:bg-white print:border-slate-400 text-xs space-y-1.5">
-                  <div class="font-bold text-indigo-950 flex items-center gap-1.5">
-                    <i data-lucide="arrow-left-right" class="w-4 h-4 text-indigo-600"></i>
-                    Catatan Penukaran Sesi Orang Tua Siswa
-                  </div>
-                  <p class="text-[11px] text-indigo-900/80 leading-relaxed" id="tickets-swapped-parents-summary">
-                    Orang tua siswa yang bertukar sesi antara Sesi 1 dan Sesi 2 telah terverifikasi oleh panitia dan seluruh perhitungannya otomatis tercermin secara real-time pada tabel okupansi di atas.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Section 4: Kolom Tanda Tangan Resmi Panitia (Never Split Across Pages) -->
-          <div class="report-signature-block avoid-break pt-4 border-t-2 border-slate-300">
-            <div class="grid grid-cols-2 gap-8 text-center text-xs">
+          <!-- Section 3: Kolom Tanda Tangan Resmi Panitia (Never Split Across Pages) -->
+          <div class="report-signature-block avoid-break pt-2 border-t-2 border-slate-300">
+            <div class="grid grid-cols-2 gap-8 text-center text-xs print:text-[8.5pt]">
               <div>
-                <p class="text-slate-500 mb-14">Mengetahui,<br><strong class="text-slate-900 font-bold">Ketua Panitia Acara</strong></p>
-                <p class="font-bold text-slate-900 border-b border-slate-400 inline-block px-10">( ............................................ )</p>
+                <p class="text-slate-500 mb-8 print:mb-6">Mengetahui,<br><strong class="text-slate-900 font-bold">Ketua Panitia Acara</strong></p>
+                <p class="font-bold text-slate-900 border-b border-slate-400 inline-block px-8">( ............................................ )</p>
               </div>
               <div>
-                <p class="text-slate-500 mb-14">Jakarta, <span id="tickets-signature-date">24 Oktober 2026</span><br><strong class="text-slate-900 font-bold">Koordinator Tiket / Bendahara</strong></p>
-                <p class="font-bold text-slate-900 border-b border-slate-400 inline-block px-10">Muhammad Fadilah</p>
+                <p class="text-slate-500 mb-8 print:mb-6">Jakarta, <span id="tickets-signature-date">24 Oktober 2026</span><br><strong class="text-slate-900 font-bold">Koordinator Tiket / Bendahara</strong></p>
+                <p class="font-bold text-slate-900 border-b border-slate-400 inline-block px-8">Muhammad Fadilah</p>
               </div>
             </div>
           </div>
 
         </div>
+
+        <!-- Section Tambahan: Rincian Siswa per Kelas & Tamu Undangan (Screen Only: no-print) -->
+        <div class="no-print space-y-3 pt-3 border-t border-slate-200">
+          <div class="flex items-center justify-between">
+            <h4 class="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+              <i data-lucide="users" class="w-4 h-4 text-indigo-600"></i>
+              Rincian Alokasi Tiket Orang Tua Siswa per Kelas & Tamu Undangan
+            </h4>
+            <span class="text-[10.5px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-2.5 py-0.5 rounded-full font-semibold">
+              Tampilan Layar Dashboard (Dokumen Cetak Resmi 1 Halaman Matriks)
+            </span>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <!-- Tabel Kelas Siswa -->
+            <div class="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-xs">
+              <div class="bg-slate-100 px-3 py-2 border-b border-slate-200 font-bold text-[11px] text-slate-800">
+                Distribusi Tiket Orang Tua Siswa (Kelas 7, 8, 9)
+              </div>
+              <table class="w-full text-left text-xs">
+                <thead class="bg-slate-50 text-slate-600 text-[10px] uppercase font-bold border-b border-slate-200">
+                  <tr>
+                    <th class="py-2 px-3">Kelas</th>
+                    <th class="py-2 px-3">Sesi Ditugaskan</th>
+                    <th class="py-2 px-3 text-center">Jumlah Siswa</th>
+                    <th class="py-2 px-3 text-center">Alokasi Tiket</th>
+                    <th class="py-2 px-3 text-center">Kehadiran Gate</th>
+                  </tr>
+                </thead>
+                <tbody id="tickets-class-breakdown-tbody" class="divide-y divide-slate-100">
+                  <!-- Rendered dynamically -->
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Box Ringkasan Tamu Undangan & Catatan Tukar Sesi -->
+            <div class="space-y-3">
+              <div class="border border-slate-200 rounded-2xl p-3.5 bg-white text-xs space-y-2 shadow-xs">
+                <div class="flex items-center justify-between font-bold text-slate-900 border-b border-slate-200 pb-1.5">
+                  <span class="flex items-center gap-1.5">
+                    <i data-lucide="award" class="w-4 h-4 text-amber-600"></i>
+                    Alokasi Tiket Tamu Undangan Kehormatan
+                  </span>
+                  <span id="tickets-guest-total-badge" class="px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-bold text-[10px]">
+                    0 Tiket
+                  </span>
+                </div>
+                <p class="text-[11px] text-slate-600 leading-relaxed">
+                  Tamu undangan kehormatan terdiri dari Pengurus Yayasan, Perwakilan Dinas Pendidikan, Kepala Sekolah mitra, serta Tokoh Rohaniwan. Alokasi tiket tamu undangan telah dialokasikan pada kursi VIP Sesi 1 dan Sesi 2.
+                </p>
+                <div class="grid grid-cols-2 gap-2 text-center text-[10px] pt-1">
+                  <div class="p-2 bg-slate-50 rounded-xl border border-slate-200 font-semibold">
+                    <span class="text-slate-400 block">Sesi 1 (Pagi)</span>
+                    <strong class="text-slate-900 text-xs" id="tickets-guest-s1-count">0 Tiket</strong>
+                  </div>
+                  <div class="p-2 bg-slate-50 rounded-xl border border-slate-200 font-semibold">
+                    <span class="text-slate-400 block">Sesi 2 (Siang)</span>
+                    <strong class="text-slate-900 text-xs" id="tickets-guest-s2-count">0 Tiket</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div class="border border-slate-200 rounded-2xl p-3.5 bg-indigo-50/50 text-xs space-y-1.5">
+                <div class="font-bold text-indigo-950 flex items-center gap-1.5">
+                  <i data-lucide="arrow-left-right" class="w-4 h-4 text-indigo-600"></i>
+                  Catatan Penukaran Sesi Orang Tua Siswa
+                </div>
+                <p class="text-[11px] text-indigo-900/80 leading-relaxed" id="tickets-swapped-parents-summary">
+                  Orang tua siswa yang bertukar sesi antara Sesi 1 dan Sesi 2 telah terverifikasi oleh panitia dan seluruh perhitungannya otomatis tercermin secara real-time pada tabel okupansi di atas.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
       </div>
 
       <!-- ============================================== -->
@@ -1162,69 +1183,49 @@
       <div id="report-view-finance" class="report-view-container hidden space-y-6">
         
         <!-- Printable Paper Canvas Container -->
-        <div class="bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-sm print:p-0 print:border-none print:shadow-none space-y-6">
+        <div class="bg-white p-6 sm:p-7 rounded-3xl border border-slate-200 shadow-sm print:p-0 print:border-none print:shadow-none space-y-4 print:space-y-3">
           
           <!-- Kop Surat Resmi Keuangan -->
-          <div class="border-b-2 border-slate-900 pb-4 text-center">
-            <h2 class="text-xl font-black uppercase tracking-wider text-slate-900">SMP REGINA PACIS JAKARTA</h2>
-            <p class="text-xs font-bold text-slate-700 tracking-wide mt-0.5">PANITIA DRAMA MUSIKAL & PENTAS BUDAYA 2026</p>
-            <p class="text-[11px] text-slate-500">Auditorium Regina Pacis Jakarta • Jl. Palmerah Utara No. 1, Palmerah, Jakarta Barat</p>
-            <div class="mt-3 py-1.5 bg-slate-100 rounded-lg border border-slate-300">
+          <div class="border-b-2 border-slate-900 pb-2.5 text-center">
+            <h2 class="text-lg sm:text-xl font-black uppercase tracking-wider text-slate-900">SMP REGINA PACIS JAKARTA</h2>
+            <p class="text-[11px] font-bold text-slate-700 tracking-wide mt-0.5">PANITIA DRAMA MUSIKAL & PENTAS BUDAYA 2026</p>
+            <p class="text-[10px] text-slate-500">Auditorium Regina Pacis Jakarta • Jl. Palmerah Utara No. 1, Palmerah, Jakarta Barat</p>
+            <div class="mt-2 py-1 px-3 bg-slate-100 rounded-lg border border-slate-300">
               <h3 class="text-xs sm:text-sm font-black uppercase text-slate-900 tracking-wide">
                 LAPORAN KEUANGAN HASIL PENJUALAN TIKET PERTUNJUKAN
               </h3>
               <p class="text-[10px] text-slate-700 font-medium mt-0.5">
                 Rekening Penampung Resmi: <strong class="text-slate-900 font-mono">Bank BCA 0678025685 a.n. Muhammad Fadilah</strong>
               </p>
-              <p class="text-[10px] text-slate-500 mt-0.5" id="finance-print-timestamp">Waktu Generate Laporan: -</p>
+              <p class="text-[9.5px] text-slate-500 mt-0.5" id="finance-print-timestamp">Waktu Generate Laporan: -</p>
             </div>
           </div>
 
-          <!-- Section 1: Ringkasan Finansial Eksekutif (avoid-break) -->
-          <div class="avoid-break space-y-3">
-            <div class="flex items-center justify-between">
-              <h4 class="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
-                <i data-lucide="wallet" class="w-4 h-4 text-emerald-600"></i>
-                Rekapitulasi Omset & Status Penerimaan Dana
-              </h4>
-              <span class="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
-                Terverifikasi Mutasi Bank BCA
-              </span>
-            </div>
-
-            <div id="finance-kpi-cards" class="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <!-- Rendered dynamically by loadReportData() -->
-              <div class="col-span-full py-6 text-center text-slate-400 text-xs">
-                Memuat ringkasan keuangan...
-              </div>
-            </div>
-          </div>
-
-          <!-- Section 2: Filter Controls Khusus Pembeli (Screen Only) -->
-          <div class="no-print bg-slate-50 p-4 rounded-2xl border border-slate-200 flex flex-wrap items-center gap-3">
-            <div class="flex items-center gap-2">
+          <!-- Filter Controls Khusus Pembeli (Screen Only: no-print) -->
+          <div class="no-print bg-slate-50 p-3.5 rounded-2xl border border-slate-200 flex flex-wrap items-center gap-2.5">
+            <div class="flex items-center gap-1.5">
               <i data-lucide="filter" class="w-4 h-4 text-slate-400"></i>
               <span class="text-xs font-bold text-slate-700">Filter Data:</span>
             </div>
 
             <!-- Filter Sesi -->
-            <select id="finance-filter-session" onchange="filterFinanceTable()" class="text-xs bg-white border border-slate-200 rounded-xl px-3 py-2 font-bold text-indigo-900 focus:outline-none">
+            <select id="finance-filter-session" onchange="filterFinanceTable()" class="text-xs bg-white border border-slate-200 rounded-xl px-3 py-1.5 font-bold text-indigo-900 focus:outline-none">
               <option value="all">Semua Sesi Pertunjukan</option>
               <option value="Sesi 1">Sesi 1 (Pagi: 08.00 - 12.00)</option>
               <option value="Sesi 2">Sesi 2 (Siang: 13.00 - 16.00)</option>
             </select>
 
             <!-- Filter Status Bayar -->
-            <select id="finance-filter-status" onchange="filterFinanceTable()" class="text-xs bg-white border border-slate-200 rounded-xl px-3 py-2 font-bold text-slate-700 focus:outline-none">
+            <select id="finance-filter-status" onchange="filterFinanceTable()" class="text-xs bg-white border border-slate-200 rounded-xl px-3 py-1.5 font-bold text-slate-700 focus:outline-none">
               <option value="all">Semua Status Pembayaran</option>
               <option value="verified">Lunas (Terverifikasi)</option>
               <option value="pending">Menunggu (Pending)</option>
             </select>
 
             <!-- Search Box -->
-            <div class="flex-1 min-w-[220px] relative">
-              <i data-lucide="search" class="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3"></i>
-              <input type="text" id="finance-search-input" oninput="filterFinanceTable()" placeholder="Cari nama pembeli, no HP, email, atau Order ID..." class="w-full text-xs bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <div class="flex-1 min-w-[200px] relative">
+              <i data-lucide="search" class="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5"></i>
+              <input type="text" id="finance-search-input" oninput="filterFinanceTable()" placeholder="Cari nama pembeli, email, atau Order ID..." class="w-full text-xs bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500">
             </div>
 
             <!-- Total counter -->
@@ -1233,35 +1234,65 @@
             </span>
           </div>
 
-          <!-- Section 3: Tabel Lengkap Daftar Pembeli Tiket -->
-          <div class="space-y-2">
-            <div class="flex items-center justify-between">
+          <!-- Tabel Lengkap Daftar Pembeli Tiket -->
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between px-0.5">
               <h4 class="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
-                <i data-lucide="receipt" class="w-4 h-4 text-indigo-600"></i>
-                Daftar Rincian Pembeli Tiket, Jumlah Tiket & Nominal Pembayaran
+                <i data-lucide="receipt" class="w-3.5 h-3.5 text-indigo-600"></i>
+                Daftar Rincian Pembeli Tiket & Nominal Pembayaran
               </h4>
             </div>
 
-            <div class="overflow-x-auto border border-slate-200 rounded-2xl print:border-slate-400">
-              <table class="w-full text-left text-xs">
-                <thead class="bg-slate-100 text-slate-800 uppercase tracking-wider border-b border-slate-300 font-bold">
+            <div class="overflow-x-auto border border-slate-300 rounded-xl print:border-slate-400">
+              <table class="w-full text-left text-xs print:text-[8pt]">
+                <thead class="bg-slate-100 text-slate-800 uppercase tracking-wider border-b border-slate-300 font-bold text-[11px] print:text-[8pt]">
                   <tr>
-                    <th class="py-2.5 px-2.5 text-center w-8">No</th>
-                    <th class="py-2.5 px-3">Order ID</th>
-                    <th class="py-2.5 px-3">Nama Pembeli</th>
-                    <th class="py-2.5 px-3">No. WhatsApp / HP</th>
-                    <th class="py-2.5 px-3">Email</th>
-                    <th class="py-2.5 px-3 text-center">Sesi</th>
-                    <th class="py-2.5 px-3 text-center">Tiket</th>
-                    <th class="py-2.5 px-3 text-right">Harga (Rp)</th>
-                    <th class="py-2.5 px-3 text-right">Total Bayar (Rp)</th>
-                    <th class="py-2.5 px-3 text-center">Status Bayar</th>
-                    <th class="py-2.5 px-3">Rekening Pengirim Transfer</th>
+                    <th class="py-2 px-2 text-center w-8">No</th>
+                    <th class="py-2 px-2.5 text-center whitespace-nowrap">Order ID</th>
+                    <th class="py-2 px-3">Nama Pembeli</th>
+                    <th class="py-2 px-3">Email</th>
+                    <th class="py-2 px-2.5 text-center whitespace-nowrap">Sesi</th>
+                    <th class="py-2 px-2.5 text-center whitespace-nowrap">Tiket</th>
+                    <th class="py-2 px-3 text-right whitespace-nowrap min-w-[100px]">Total Bayar (Rp)</th>
+                    <th class="py-2 px-2.5 text-center whitespace-nowrap">Status</th>
                   </tr>
                 </thead>
                 <tbody id="finance-buyers-tbody" class="divide-y divide-slate-100">
                   <!-- Rendered dynamically -->
                 </tbody>
+                <tfoot id="finance-table-tfoot" class="bg-slate-100 font-bold text-slate-900 border-t-2 border-slate-300">
+                  <!-- Rendered dynamically with comprehensive summary at table end only -->
+                </tfoot>
+              </table>
+            </div>
+          </div>
+
+          <!-- Catatan & Pernyataan Keuangan -->
+          <div class="avoid-break bg-slate-50 print:bg-white p-3 rounded-xl border border-slate-200 text-xs text-slate-600 space-y-1">
+            <strong class="text-slate-900 block font-bold">Catatan Verifikasi & Rekening Resmi:</strong>
+            <p class="text-[10.5px] leading-relaxed">
+              1. Seluruh pembayaran tiket masuk disetorkan melalui transfer perbankan ke rekening penampung resmi: <strong>BCA 0678025685 a.n. Muhammad Fadilah</strong>.<br>
+              2. Status <strong>Lunas (Verified)</strong> menandakan mutasi dana telah diverifikasi masuk ke rekening bendahara acara.<br>
+              3. Harga standar tiket reguler pertunjukan adalah Rp 75.000 per lembar (pax).
+            </p>
+          </div>
+
+          <!-- Kolom Tanda Tangan Resmi Panitia Keuangan -->
+          <div class="report-signature-block avoid-break pt-2 border-t-2 border-slate-300">
+            <div class="grid grid-cols-2 gap-8 text-center text-xs print:text-[8.5pt]">
+              <div>
+                <p class="text-slate-500 mb-8 print:mb-6">Mengetahui,<br><strong class="text-slate-900 font-bold">Ketua Panitia Acara</strong></p>
+                <p class="font-bold text-slate-900 border-b border-slate-400 inline-block px-8">( ............................................ )</p>
+              </div>
+              <div>
+                <p class="text-slate-500 mb-8 print:mb-6">Jakarta, <span id="finance-signature-date">24 Oktober 2026</span><br><strong class="text-slate-900 font-bold">Koordinator Tiket / Bendahara</strong></p>
+                <p class="font-bold text-slate-900 border-b border-slate-400 inline-block px-8">Muhammad Fadilah</p>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
                 <tfoot id="finance-table-tfoot" class="bg-slate-100 font-bold text-slate-900 border-t-2 border-slate-300">
                   <!-- Rendered dynamically with totals -->
                 </tfoot>

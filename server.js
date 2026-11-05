@@ -737,7 +737,7 @@ app.get('/api/reports/finance/export-csv', (req, res) => {
     csv += `"Total Penjualan Pending","${f.pending_orders} Pesanan","${f.pending_tickets} Tiket","Rp ${f.pending_revenue.toLocaleString('id-ID')}","Menunggu verifikasi bukti transfer panitia"\n\n`;
 
     csv += `"=== DAFTAR LENGKAP PEMBELI TIKET & STATUS PEMBAYARAN ==="\n`;
-    csv += `"No","No. Pesanan (Order ID)","Nama Pembeli","Email","No. WhatsApp","Sesi Pertunjukan","Jumlah Tiket (Pax)","Harga Satuan (Rp)","Total Bayar (Rp)","Status Pembayaran","Rekening Pengirim Transfer","Tanggal Pemesanan"\n`;
+    csv += `"No","No. Pesanan (Order ID)","Nama Pembeli","Email","Sesi Pertunjukan","Jumlah Tiket (Pax)","Total Bayar (Rp)","Status Pembayaran","Rekening Pengirim Transfer","Tanggal Pemesanan"\n`;
 
     for (const b of buyers) {
       csv += [
@@ -745,10 +745,8 @@ app.get('/api/reports/finance/export-csv', (req, res) => {
         `"${b.order_id}"`,
         `"${b.name.replace(/"/g, '""')}"`,
         `"${b.email.replace(/"/g, '""')}"`,
-        `"'${b.phone}"`,
         `"${b.session}"`,
         b.ticket_qty,
-        b.ticket_price || 75000,
         b.total_amount,
         `"${b.status.toUpperCase()}"`,
         `"${(b.sender_account_name || '-').replace(/"/g, '""')}"`,

@@ -3360,22 +3360,27 @@ function renderTicketsReport(data) {
   if (!data || !data.recap) return;
   const recap = data.recap;
 
-  // 1. KPI Cards
+  // 1. KPI Cards (Compact & Integrated for 1 Page A4)
   const kpiContainer = document.getElementById('tickets-kpi-cards');
   if (kpiContainer) {
     const s1 = recap.session_1;
     const s2 = recap.session_2;
     const gt = recap.grand_total;
 
+    const capHeader = document.getElementById('tickets-header-capacity');
+    if (capHeader) {
+      capHeader.textContent = `Total Kapasitas: ${gt.capacity} Kursi (${s1.capacity} S1 / ${s2.capacity} S2)`;
+    }
+
     const cards = [
       {
-        sessionTitle: 'Sesi 1 (Pagi: 08.00 - 12.00)',
+        sessionTitle: 'Sesi 1 (Pagi)',
         badgeClass: 'bg-indigo-100 text-indigo-900 border-indigo-200',
         d: s1,
         isTotal: false
       },
       {
-        sessionTitle: 'Sesi 2 (Siang: 13.00 - 16.00)',
+        sessionTitle: 'Sesi 2 (Siang)',
         badgeClass: 'bg-purple-100 text-purple-900 border-purple-200',
         d: s2,
         isTotal: false
@@ -3392,45 +3397,38 @@ function renderTicketsReport(data) {
       const d = c.d;
       const occ = d.occupancy_rate || 0;
       const att = d.attendance_rate || 0;
+      const isHigh = occ >= 90;
+      const isMid = occ >= 75;
 
       return `
-        <div class="p-4 rounded-2xl border ${c.isTotal ? 'border-emerald-300 bg-emerald-50/20' : 'border-slate-200 bg-white'} text-xs space-y-2.5">
+        <div class="p-2.5 rounded-xl border ${c.isTotal ? 'border-emerald-300 bg-emerald-50/20' : 'border-slate-200 bg-white'} text-xs print:p-2 print:text-[8pt] space-y-1 shadow-xs">
           <div class="flex items-center justify-between">
-            <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg text-[11px] font-bold ${c.badgeClass} border">
-              <i data-lucide="${c.isTotal ? 'award' : 'sparkles'}" class="w-3.5 h-3.5"></i>
+            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10.5px] print:text-[8pt] font-bold ${c.badgeClass} border">
+              <i data-lucide="${c.isTotal ? 'award' : 'sparkles'}" class="w-3 h-3"></i>
               ${escapeHtml(c.sessionTitle)}
             </span>
-            <span class="text-[11px] font-bold text-slate-500">Kapasitas: ${d.capacity} Kursi</span>
+            <span class="text-[10px] font-semibold text-slate-500">Kapasitas: ${d.capacity} Kursi</span>
           </div>
 
-          <div>
-            <div class="flex items-baseline justify-between mb-1">
-              <div class="flex items-baseline gap-1">
-                <span class="text-2xl font-black text-slate-900">${d.total_distributed}</span>
-                <span class="text-[11px] font-bold text-slate-400">/ ${d.capacity} Pax</span>
-              </div>
-              <strong class="text-xs font-black ${occ >= 90 ? 'text-rose-600' : 'text-indigo-700'}">${occ}% Okupansi</strong>
+          <div class="flex items-baseline justify-between pt-0.5">
+            <div class="flex items-baseline gap-1">
+              <span class="text-base font-black text-slate-900">${d.total_distributed}</span>
+              <span class="text-[10px] text-slate-400 font-semibold">/ ${d.capacity} Pax</span>
             </div>
-            <div class="w-full bg-slate-100 rounded-full h-2 overflow-hidden border border-slate-200">
-              <div class="h-2 rounded-full ${occ >= 90 ? 'bg-rose-500' : occ >= 70 ? 'bg-indigo-600' : 'bg-emerald-500'}" style="width: ${Math.min(occ, 100)}%"></div>
-            </div>
+            <span class="px-1.5 py-0.5 rounded text-[10px] font-black ${isHigh ? 'bg-rose-100 text-rose-800' : isMid ? 'bg-indigo-100 text-indigo-800' : 'bg-emerald-100 text-emerald-800'}">
+              ${occ}% Okupansi
+            </span>
           </div>
 
-          <div class="flex justify-between items-center text-[11px] pt-0.5 border-t border-slate-100">
-            <span class="text-slate-500">Sisa Kursi: <strong class="text-slate-900 font-bold">${d.remaining_seats} Kursi</strong></span>
-            <span class="text-emerald-700 font-semibold">Tersedia Dijual</span>
+          <div class="flex justify-between items-center text-[10px] text-slate-600 pt-0.5 border-t border-slate-100">
+            <span>Sisa: <strong class="font-bold ${d.remaining_seats > 0 ? 'text-emerald-700' : 'text-rose-600'}">${d.remaining_seats} Kursi</strong></span>
+            <span>Presensi: <strong class="text-slate-800 font-bold">${d.total_attended} Hadir (${att}%)</strong></span>
           </div>
 
-          <div class="p-2 rounded-xl bg-slate-50 border border-slate-200 text-[10px] space-y-1">
-            <div class="flex justify-between items-center">
-              <span class="text-slate-500 font-medium">Presensi Gate:</span>
-              <strong class="text-slate-800">${d.total_attended} / ${d.total_distributed} Hadir (${att}%)</strong>
-            </div>
-            <div class="grid grid-cols-3 gap-1 text-center pt-1 border-t border-slate-200/60 text-[9.5px]">
-              <span class="bg-indigo-50/80 rounded py-0.5 text-indigo-900 font-semibold">Ortu: ${d.parents.tickets}</span>
-              <span class="bg-purple-50/80 rounded py-0.5 text-purple-900 font-semibold">Tamu: ${d.guests.tickets}</span>
-              <span class="bg-emerald-50/80 rounded py-0.5 text-emerald-900 font-semibold">Beli: ${d.buyers ? d.buyers.tickets_verified : 0}</span>
-            </div>
+          <div class="grid grid-cols-3 gap-1 text-center pt-0.5 text-[9px] text-slate-600">
+            <span class="bg-indigo-50/70 rounded py-0.5 text-indigo-950 font-semibold">Ortu: ${d.parents.tickets}</span>
+            <span class="bg-purple-50/70 rounded py-0.5 text-purple-950 font-semibold">Tamu: ${d.guests.tickets}</span>
+            <span class="bg-emerald-50/70 rounded py-0.5 text-emerald-950 font-semibold">Beli: ${d.buyers ? d.buyers.tickets_verified : 0}</span>
           </div>
         </div>
       `;
@@ -3539,16 +3537,16 @@ function renderTicketsReport(data) {
 
     tbodyMatrix.innerHTML = rows.map(r => `
       <tr class="${r.highlight || 'hover:bg-slate-50/70'} transition">
-        <td class="py-2 px-3 text-slate-900">
+        <td class="py-1 px-2.5 text-slate-900">
           <span class="inline-flex items-center gap-1.5 font-bold">
             <i data-lucide="${r.icon}" class="w-3.5 h-3.5 text-indigo-600 flex-shrink-0"></i>
             <span>${escapeHtml(r.label)}</span>
           </span>
         </td>
-        <td class="py-2 px-3 text-center">${r.s1}</td>
-        <td class="py-2 px-3 text-center">${r.s2}</td>
-        <td class="py-2 px-3 text-center bg-indigo-50/30 font-bold">${r.total}</td>
-        <td class="py-2 px-3 text-[10.5px] text-slate-500">${escapeHtml(r.note)}</td>
+        <td class="py-1 px-2 text-center whitespace-nowrap">${r.s1}</td>
+        <td class="py-1 px-2 text-center whitespace-nowrap">${r.s2}</td>
+        <td class="py-1 px-2 text-center bg-indigo-50/30 font-bold whitespace-nowrap">${r.total}</td>
+        <td class="py-1 px-2.5 text-[10px] text-slate-500">${escapeHtml(r.note)}</td>
       </tr>
     `).join('');
   }
@@ -3601,39 +3599,6 @@ function renderTicketsReport(data) {
 // 2. RENDER LAPORAN KEUANGAN PENJUALAN TIKET
 // ------------------------------------------
 function renderFinanceReport(data) {
-  if (!data || !data.finance) return;
-  const f = data.finance;
-
-  // KPI Cards
-  const kpiEl = document.getElementById('finance-kpi-cards');
-  if (kpiEl) {
-    kpiEl.innerHTML = `
-      <div class="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs">
-        <span class="text-emerald-700 text-[10px] uppercase font-bold block">Total Omset Lunas (Verified)</span>
-        <strong class="text-emerald-950 text-lg font-black block mt-0.5">Rp ${formatRupiah(f.verified_revenue)}</strong>
-        <span class="text-[10px] text-emerald-800 font-semibold block mt-0.5">${f.verified_tickets} Tiket Lunas (${f.verified_orders} Pesanan)</span>
-      </div>
-
-      <div class="p-3.5 rounded-2xl bg-indigo-50 border border-indigo-200 text-xs">
-        <span class="text-indigo-700 text-[10px] uppercase font-bold block">Pendapatan Sesi 1 (Pagi)</span>
-        <strong class="text-indigo-950 text-lg font-black block mt-0.5">Rp ${formatRupiah(f.session_1.revenue)}</strong>
-        <span class="text-[10px] text-indigo-800 font-semibold block mt-0.5">${f.session_1.tickets} Tiket (${f.session_1.orders} Pesanan)</span>
-      </div>
-
-      <div class="p-3.5 rounded-2xl bg-purple-50 border border-purple-200 text-xs">
-        <span class="text-purple-700 text-[10px] uppercase font-bold block">Pendapatan Sesi 2 (Siang)</span>
-        <strong class="text-purple-950 text-lg font-black block mt-0.5">Rp ${formatRupiah(f.session_2.revenue)}</strong>
-        <span class="text-[10px] text-purple-800 font-semibold block mt-0.5">${f.session_2.tickets} Tiket (${f.session_2.orders} Pesanan)</span>
-      </div>
-
-      <div class="p-3.5 rounded-2xl bg-slate-100 border border-slate-200 text-xs">
-        <span class="text-slate-500 text-[10px] uppercase font-bold block">Rekening Penampung BCA</span>
-        <strong class="text-slate-900 text-sm font-black font-mono block mt-0.5">0678025685</strong>
-        <span class="text-[10px] text-slate-600 block mt-0.5 truncate">a.n. Muhammad Fadilah</span>
-      </div>
-    `;
-  }
-
   filterFinanceTable();
   if (window.lucide) lucide.createIcons();
 }
@@ -3671,7 +3636,7 @@ function filterFinanceTable() {
   if (!tbody) return;
 
   if (list.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="11" class="text-center py-8 text-slate-400 text-xs">Tidak ada data pembeli yang cocok dengan filter.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="text-center py-8 text-slate-400 text-xs">Tidak ada data pembeli yang cocok dengan filter.</td></tr>`;
     if (tfoot) tfoot.innerHTML = '';
     return;
   }
@@ -3684,7 +3649,6 @@ function filterFinanceTable() {
     const isLunas = b.status === 'verified';
     const qty = b.ticket_qty || 1;
     const amount = b.total_amount || 0;
-    const price = b.ticket_price || 75000;
 
     totalTickets += qty;
     if (isLunas) {
@@ -3693,67 +3657,97 @@ function filterFinanceTable() {
       totalPendingNominal += amount;
     }
 
-    const cleanPhone = (b.phone || '').replace(/[^0-9]/g, '');
-    const waUrl = cleanPhone ? (cleanPhone.startsWith('0') ? '62' + cleanPhone.slice(1) : cleanPhone) : '';
-
     return `
-      <tr class="hover:bg-slate-50/80 transition text-xs">
-        <td class="py-2 px-2.5 text-center text-slate-400 font-semibold">${idx + 1}</td>
-        <td class="py-2 px-3 font-mono font-bold text-indigo-900 whitespace-nowrap">${escapeHtml(b.order_id)}</td>
-        <td class="py-2 px-3 font-bold text-slate-900">${escapeHtml(b.name)}</td>
-        <td class="py-2 px-3 font-semibold text-slate-700 whitespace-nowrap">
-          ${waUrl ? `
-            <a href="https://wa.me/${waUrl}" target="_blank" class="hover:text-emerald-600 inline-flex items-center gap-1">
-              <i data-lucide="phone" class="w-3 h-3 text-emerald-600"></i>
-              <span>${escapeHtml(b.phone)}</span>
-            </a>
-          ` : escapeHtml(b.phone || '-')}
+      <tr class="hover:bg-slate-50/80 transition text-xs print:text-[8pt]">
+        <td class="py-1.5 px-2 text-center text-slate-400 font-semibold">${idx + 1}</td>
+        <td class="py-1.5 px-2.5 font-mono font-bold text-indigo-900 whitespace-nowrap text-center">${escapeHtml(b.order_id)}</td>
+        <td class="py-1.5 px-3 font-bold text-slate-900">
+          <div>${escapeHtml(b.name)}</div>
+          ${b.sender_account_name ? `<div class="text-[9.5px] text-slate-500 font-normal leading-tight mt-0.5"><span class="text-slate-400">Rek:</span> ${escapeHtml(b.sender_account_name)}</div>` : ''}
         </td>
-        <td class="py-2 px-3 text-slate-600 text-[11px]">${escapeHtml(b.email || '-')}</td>
-        <td class="py-2 px-3 text-center whitespace-nowrap">
+        <td class="py-1.5 px-3 text-slate-600 text-[10.5px] print:text-[7.5pt] break-all">${escapeHtml(b.email || '-')}</td>
+        <td class="py-1.5 px-2.5 text-center whitespace-nowrap">
           <span class="px-2 py-0.5 rounded text-[10px] font-bold ${b.session === 'Sesi 2' ? 'bg-purple-100 text-purple-800' : 'bg-indigo-100 text-indigo-800'}">
             ${escapeHtml(b.session)}
           </span>
         </td>
-        <td class="py-2 px-3 text-center font-black text-slate-900 text-xs whitespace-nowrap">${qty} Pax</td>
-        <td class="py-2 px-3 text-right text-slate-600 whitespace-nowrap">Rp ${formatRupiah(price)}</td>
-        <td class="py-2 px-3 text-right font-black text-slate-900 whitespace-nowrap">Rp ${formatRupiah(amount)}</td>
-        <td class="py-2 px-3 text-center whitespace-nowrap">
+        <td class="py-1.5 px-2.5 text-center font-black text-slate-900 whitespace-nowrap">${qty} Pax</td>
+        <td class="py-1.5 px-3 text-right font-black text-slate-900 whitespace-nowrap min-w-[95px]">Rp ${formatRupiah(amount)}</td>
+        <td class="py-1.5 px-2.5 text-center whitespace-nowrap">
           ${isLunas ? `
-            <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
               ✓ Lunas
             </span>
           ` : `
-            <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">
+            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">
               ⏳ Pending
             </span>
           `}
-        </td>
-        <td class="py-2 px-3 text-slate-600 text-[11px]">
-          ${escapeHtml(b.sender_account_name || '-')}
         </td>
       </tr>
     `;
   }).join('');
 
   if (tfoot) {
+    const verifiedOrders = list.filter(b => b.status === 'verified').length;
+    const pendingOrders = list.filter(b => b.status !== 'verified').length;
+
+    const s1Items = list.filter(b => b.session === 'Sesi 1' && b.status === 'verified');
+    const s2Items = list.filter(b => b.session === 'Sesi 2' && b.status === 'verified');
+    const s1Tickets = s1Items.reduce((acc, cur) => acc + (cur.ticket_qty || 0), 0);
+    const s2Tickets = s2Items.reduce((acc, cur) => acc + (cur.ticket_qty || 0), 0);
+    const s1Revenue = s1Items.reduce((acc, cur) => acc + (cur.total_amount || 0), 0);
+    const s2Revenue = s2Items.reduce((acc, cur) => acc + (cur.total_amount || 0), 0);
+
+    const pendingTickets = list.filter(b => b.status !== 'verified').reduce((acc, cur) => acc + (cur.ticket_qty || 0), 0);
+
     tfoot.innerHTML = `
-      <tr>
-        <td colspan="6" class="py-2.5 px-3 text-right uppercase text-[11px] font-black text-slate-700">
-          Total Ringkasan:
+      <!-- Baris 1: Total Tabel Kolom Utama -->
+      <tr class="bg-slate-100 border-t-2 border-slate-300 font-bold text-slate-900 text-xs print:text-[8.5pt]">
+        <td colspan="5" class="py-2.5 px-3 text-right uppercase tracking-wider font-black text-slate-800">
+          TOTAL RINGKASAN:
         </td>
-        <td class="py-2.5 px-3 text-center text-xs font-black text-slate-900 whitespace-nowrap">
+        <td class="py-2.5 px-2.5 text-center text-xs font-black text-slate-900 whitespace-nowrap bg-indigo-50/70">
           ${totalTickets} Pax
         </td>
-        <td class="py-2.5 px-3 text-right text-[10px] text-slate-400">Total Lunas:</td>
-        <td class="py-2.5 px-3 text-right text-xs font-black text-emerald-700 whitespace-nowrap">
+        <td class="py-2.5 px-3 text-right text-xs font-black text-emerald-800 whitespace-nowrap bg-emerald-50/70 min-w-[95px]">
           Rp ${formatRupiah(totalVerifiedNominal)}
         </td>
-        <td class="py-2.5 px-3 text-center text-[10px] font-bold text-amber-700 whitespace-nowrap">
-          ${totalPendingNominal > 0 ? `(Pending: Rp ${formatRupiah(totalPendingNominal)})` : 'Lunas Semua'}
+        <td class="py-2.5 px-2 text-center text-[10px] font-bold text-slate-700 whitespace-nowrap">
+          ${verifiedOrders} Lunas${pendingOrders > 0 ? ` / ${pendingOrders} Pending` : ''}
         </td>
-        <td class="py-2.5 px-3 text-[10px] text-slate-500">
-          ${list.length} Pesanan Terfilter
+      </tr>
+      <!-- Baris 2: Rincian Lengkap Finansial di Akhir Tabel -->
+      <tr class="bg-slate-50 border-t border-slate-200 text-xs print:text-[8pt]">
+        <td colspan="8" class="p-3">
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-slate-700">
+            <div class="p-2.5 rounded-xl bg-indigo-50/70 border border-indigo-200">
+              <span class="block text-[10px] font-bold uppercase text-indigo-900">Penjualan Sesi 1 (Pagi)</span>
+              <div class="flex items-baseline justify-between mt-1">
+                <strong class="text-indigo-950 font-black text-xs">${s1Tickets} Pax (${s1Items.length} Pesanan)</strong>
+                <strong class="text-emerald-700 font-black">Rp ${formatRupiah(s1Revenue)}</strong>
+              </div>
+            </div>
+            <div class="p-2.5 rounded-xl bg-purple-50/70 border border-purple-200">
+              <span class="block text-[10px] font-bold uppercase text-purple-900">Penjualan Sesi 2 (Siang)</span>
+              <div class="flex items-baseline justify-between mt-1">
+                <strong class="text-purple-950 font-black text-xs">${s2Tickets} Pax (${s2Items.length} Pesanan)</strong>
+                <strong class="text-emerald-700 font-black">Rp ${formatRupiah(s2Revenue)}</strong>
+              </div>
+            </div>
+            <div class="p-2.5 rounded-xl bg-white border border-slate-200">
+              <span class="block text-[10px] font-bold uppercase text-slate-500">Rekening Penampung BCA Resmi</span>
+              <div class="mt-1 font-mono font-black text-slate-900 text-xs">
+                0678025685 <span class="font-sans font-semibold text-slate-500 text-[10px]">a.n. Muhammad Fadilah</span>
+              </div>
+            </div>
+          </div>
+          ${totalPendingNominal > 0 ? `
+            <div class="mt-2 text-[10.5px] text-amber-800 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200 flex items-center justify-between">
+              <span>*Catatan Pending: Terdapat <strong>${pendingOrders} pesanan</strong> (${pendingTickets} Pax) yang belum lunas.</span>
+              <strong>Menunggu Mutasi: Rp ${formatRupiah(totalPendingNominal)}</strong>
+            </div>
+          ` : ''}
         </td>
       </tr>
     `;
