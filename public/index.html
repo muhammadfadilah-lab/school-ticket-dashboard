@@ -1438,37 +1438,48 @@
             </div>
           </div>
 
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label class="block text-xs font-bold text-slate-700 mb-1">Kategori Tiket</label>
-              <select name="ticket_category" id="manual-ticket-cat" onchange="updateManualPrice()" class="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white">
-                <option value="Reguler">Reguler</option>
-                <option value="Presale">Presale</option>
-                <option value="VIP">VIP</option>
+              <label class="block text-xs font-bold text-slate-700 mb-1">Pilihan Sesi Pertunjukan *</label>
+              <select name="performance_session" id="manual-performance-session" required class="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white font-bold text-indigo-900 focus:ring-2 focus:ring-indigo-500">
+                <option value="Session 1 : 09.30 AM to 12.00 PM">Sesi 1 (Pagi: 09.30 - 12.00 WIB)</option>
+                <option value="Session 2 : 13.00 PM to 15.30 PM">Sesi 2 (Siang: 13.00 - 15.30 WIB)</option>
               </select>
             </div>
             <div>
-              <label class="block text-xs font-bold text-slate-700 mb-1">Jumlah Tiket</label>
-              <input type="number" name="ticket_qty" id="manual-ticket-qty" min="1" value="1" onchange="updateManualPrice()" class="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white">
+              <label class="block text-xs font-bold text-slate-700 mb-1">Kategori Tiket</label>
+              <select name="ticket_category" id="manual-ticket-cat" onchange="updateManualPrice()" class="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white font-medium">
+                <option value="OTS / On The Spot" selected>OTS / On The Spot</option>
+                <option value="Reguler">Reguler</option>
+                <option value="VIP">VIP</option>
+                <option value="Presale">Presale</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1">Jumlah Tiket *</label>
+              <input type="number" name="ticket_qty" id="manual-ticket-qty" min="1" value="1" oninput="updateManualPrice()" onchange="updateManualPrice()" class="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white font-bold text-slate-800">
             </div>
             <div>
               <label class="block text-xs font-bold text-slate-700 mb-1">Total Tagihan (Rp)</label>
-              <input type="number" name="ticket_price" id="manual-ticket-total" readonly class="w-full px-3.5 py-2 text-sm bg-slate-100 border border-slate-200 rounded-xl font-bold text-indigo-700">
+              <input type="number" name="ticket_price" id="manual-ticket-total" readonly class="w-full px-3.5 py-2 text-sm bg-indigo-50/60 border border-indigo-200 rounded-xl font-black text-indigo-700">
             </div>
           </div>
 
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label class="block text-xs font-bold text-slate-700 mb-1">Metode Pembayaran</label>
-              <select name="payment_method" class="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white">
-                <option value="Tunai / Cash (Di Tempat)">Tunai / Cash (Di Tempat)</option>
+              <select name="payment_method" class="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white font-medium">
+                <option value="Tunai / Cash (Di Tempat)" selected>Tunai / Cash (Di Tempat)</option>
+                <option value="QRIS / E-Wallet (Di Tempat)">QRIS / E-Wallet (Di Tempat)</option>
                 <option value="Transfer Bank BCA">Transfer Bank BCA</option>
                 <option value="Transfer Bank Mandiri">Transfer Bank Mandiri</option>
-                <option value="QRIS / E-Wallet">QRIS / E-Wallet</option>
               </select>
             </div>
             <div>
-              <label class="block text-xs font-bold text-slate-700 mb-1">Upload Bukti Transfer (Opsional)</label>
+              <label class="block text-xs font-bold text-slate-700 mb-1">Upload Bukti Transfer / Struk (Opsional)</label>
               <input type="file" name="payment_proof" accept="image/*" class="w-full text-xs text-slate-500 file:mr-2 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
             </div>
           </div>
@@ -1476,14 +1487,14 @@
           <div class="pt-2">
             <label class="flex items-center gap-2 cursor-pointer bg-emerald-50 p-3 rounded-xl border border-emerald-200">
               <input type="checkbox" name="auto_verify" value="true" checked class="w-4 h-4 text-emerald-600 rounded">
-              <span class="text-xs text-emerald-900 font-semibold">Tandai LANGSUNG LUNAS & Kirim E-Tiket WhatsApp ke pembeli</span>
+              <span class="text-xs text-emerald-900 font-bold">Tandai LANGSUNG LUNAS & Masukkan ke Data Pembeli Resmi</span>
             </label>
           </div>
 
           <div class="pt-4 flex justify-end">
-            <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-6 py-2.5 rounded-xl transition shadow-md flex items-center gap-2 text-sm">
+            <button type="submit" id="btn-submit-manual-order" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-6 py-2.5 rounded-xl transition shadow-md flex items-center gap-2 text-sm">
               <i data-lucide="check" class="w-4 h-4"></i>
-              <span>Simpan & Terbitkan Tiket</span>
+              <span>Simpan & Masukkan ke Data Pembeli</span>
             </button>
           </div>
         </form>

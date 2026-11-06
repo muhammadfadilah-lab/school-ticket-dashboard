@@ -490,7 +490,75 @@ function initDatabase() {
     }
   }
 
-  // 6. Fix any legacy orders where total_amount doesn't match ticket_qty * ticket_price
+  // 6. Rehydrate manual/OTS orders from config/manual_orders.json
+  const manualPath = path.join(__dirname, 'config', 'manual_orders.json');
+  if (fs.existsSync(manualPath)) {
+    try {
+      const manualList = JSON.parse(fs.readFileSync(manualPath, 'utf8'));
+      if (Array.isArray(manualList)) {
+        const insManual = db.prepare(`
+          INSERT INTO orders (
+            order_id, name, phone, email, institution, ticket_category,
+            performance_session, sender_account_name, has_transferred,
+            ticket_qty, ticket_price, total_amount, payment_method,
+            payment_proof_url, notes, status, verified_at, verified_by,
+            checked_in, checked_in_at, created_at, raw_source
+          ) VALUES (
+            @order_id, @name, @phone, @email, @institution, @ticket_category,
+            @performance_session, @sender_account_name, @has_transferred,
+            @ticket_qty, @ticket_price, @total_amount, @payment_method,
+            @payment_proof_url, @notes, @status, @verified_at, @verified_by,
+            @checked_in, @checked_in_at, @created_at, 'manual_dashboard'
+          )
+          ON CONFLICT(order_id) DO UPDATE SET
+            name = excluded.name,
+            phone = excluded.phone,
+            email = excluded.email,
+            institution = excluded.institution,
+            ticket_category = excluded.ticket_category,
+            performance_session = excluded.performance_session,
+            sender_account_name = excluded.sender_account_name,
+            has_transferred = excluded.has_transferred,
+            ticket_qty = excluded.ticket_qty,
+            ticket_price = excluded.ticket_price,
+            total_amount = excluded.total_amount,
+            payment_method = excluded.payment_method,
+            status = excluded.status
+        `);
+        for (const m of manualList) {
+          if (m && m.order_id) {
+            insManual.run({
+              order_id: m.order_id,
+              name: m.name,
+              phone: m.phone || '',
+              email: m.email || '',
+              institution: m.institution || '',
+              ticket_category: m.ticket_category || 'OTS / On The Spot',
+              performance_session: m.performance_session || 'Session 1 : 09.30 AM to 12.00 PM',
+              sender_account_name: m.sender_account_name || m.name || '',
+              has_transferred: m.has_transferred || 'Sudah (OTS)',
+              ticket_qty: m.ticket_qty || 1,
+              ticket_price: m.ticket_price || 75000,
+              total_amount: m.total_amount || 75000,
+              payment_method: m.payment_method || 'Tunai / Manual (OTS)',
+              payment_proof_url: m.payment_proof_url || '',
+              notes: m.notes || '',
+              status: m.status || 'verified',
+              verified_at: m.verified_at || null,
+              verified_by: m.verified_by || 'Admin Kasir OTS',
+              checked_in: m.checked_in ? 1 : 0,
+              checked_in_at: m.checked_in_at || null,
+              created_at: m.created_at || new Date().toISOString()
+            });
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Error reading config/manual_orders.json:', e.message);
+    }
+  }
+
+  // 7. Fix any legacy orders where total_amount doesn't match ticket_qty * ticket_price
   try {
     db.prepare(`
       UPDATE orders
@@ -502,7 +570,7 @@ function initDatabase() {
     `).run();
   } catch (e) {}
 
-  // 7. Auto-Rehydrate from VAULT_BACKUP environment variable if provided
+  // 8. Auto-Rehydrate from VAULT_BACKUP environment variable if provided
   if (process.env.VAULT_BACKUP) {
     try {
       const envVault = JSON.parse(process.env.VAULT_BACKUP);
@@ -621,6 +689,20 @@ function persistGuestsToFile() {
   }
 }
 
+// Persist manual/OTS orders to config/manual_orders.json
+function persistManualOrdersToFile() {
+  try {
+    const rows = db.prepare("SELECT * FROM orders WHERE raw_source = 'manual_dashboard' ORDER BY id ASC").all();
+    const cfgDir = path.join(__dirname, 'config');
+    if (!fs.existsSync(cfgDir)) {
+      fs.mkdirSync(cfgDir, { recursive: true });
+    }
+    fs.writeFileSync(path.join(cfgDir, 'manual_orders.json'), JSON.stringify(rows, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('Warning writing config/manual_orders.json:', err.message);
+  }
+}
+
 // Get Authoritative Server Vault State
 function getVaultState() {
   const deleted_orders = db.prepare('SELECT order_id, phone, name, deleted_at FROM deleted_orders').all();
@@ -665,12 +747,15 @@ function getVaultState() {
     };
   }
 
+  const manual_orders = db.prepare("SELECT * FROM orders WHERE raw_source = 'manual_dashboard' ORDER BY id ASC").all();
+
   return {
     deleted_orders,
     parent_swaps,
     checkins,
     verified_orders,
     guests,
+    manual_orders,
     settings: getSettings()
   };
 }
@@ -810,6 +895,67 @@ function applyVaultSync(vault) {
     }
   }
 
+  // 8. Process Manual Orders (OTS)
+  if (Array.isArray(vault.manual_orders)) {
+    const insManual = db.prepare(`
+      INSERT INTO orders (
+        order_id, name, phone, email, institution, ticket_category,
+        performance_session, sender_account_name, has_transferred,
+        ticket_qty, ticket_price, total_amount, payment_method,
+        payment_proof_url, notes, status, verified_at, verified_by,
+        checked_in, checked_in_at, created_at, raw_source
+      ) VALUES (
+        @order_id, @name, @phone, @email, @institution, @ticket_category,
+        @performance_session, @sender_account_name, @has_transferred,
+        @ticket_qty, @ticket_price, @total_amount, @payment_method,
+        @payment_proof_url, @notes, @status, @verified_at, @verified_by,
+        @checked_in, @checked_in_at, @created_at, 'manual_dashboard'
+      )
+      ON CONFLICT(order_id) DO UPDATE SET
+        name = excluded.name,
+        phone = excluded.phone,
+        email = excluded.email,
+        institution = excluded.institution,
+        ticket_category = excluded.ticket_category,
+        performance_session = excluded.performance_session,
+        sender_account_name = excluded.sender_account_name,
+        has_transferred = excluded.has_transferred,
+        ticket_qty = excluded.ticket_qty,
+        ticket_price = excluded.ticket_price,
+        total_amount = excluded.total_amount,
+        payment_method = excluded.payment_method,
+        status = excluded.status
+    `);
+    for (const m of vault.manual_orders) {
+      if (m && m.order_id) {
+        insManual.run({
+          order_id: m.order_id,
+          name: m.name,
+          phone: m.phone || '',
+          email: m.email || '',
+          institution: m.institution || '',
+          ticket_category: m.ticket_category || 'OTS / On The Spot',
+          performance_session: m.performance_session || 'Session 1 : 09.30 AM to 12.00 PM',
+          sender_account_name: m.sender_account_name || m.name || '',
+          has_transferred: m.has_transferred || 'Sudah (OTS)',
+          ticket_qty: m.ticket_qty || 1,
+          ticket_price: m.ticket_price || 75000,
+          total_amount: m.total_amount || 75000,
+          payment_method: m.payment_method || 'Tunai / Manual (OTS)',
+          payment_proof_url: m.payment_proof_url || '',
+          notes: m.notes || '',
+          status: m.status || 'verified',
+          verified_at: m.verified_at || null,
+          verified_by: m.verified_by || 'Admin Kasir OTS',
+          checked_in: m.checked_in ? 1 : 0,
+          checked_in_at: m.checked_in_at || null,
+          created_at: m.created_at || new Date().toISOString()
+        });
+      }
+    }
+    persistManualOrdersToFile();
+  }
+
   return getVaultState();
 }
 
@@ -844,6 +990,7 @@ module.exports = {
   persistSettingsToFile,
   persistInvitationsToFile,
   persistGuestsToFile,
+  persistManualOrdersToFile,
   persistDeletedOrdersToFile,
   persistParentSwapsToFile,
   persistCheckinsLogToFile,

@@ -13,6 +13,7 @@ const {
   persistSettingsToFile,
   persistInvitationsToFile,
   persistGuestsToFile,
+  persistManualOrdersToFile,
   persistDeletedOrdersToFile,
   persistParentSwapsToFile,
   persistCheckinsLogToFile,
@@ -65,8 +66,12 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Helper to generate unique order ID
 function generateOrderId() {
-  const num = Math.floor(1000 + Math.random() * 9000);
-  return `TIX-${num}`;
+  while (true) {
+    const num = Math.floor(1000 + Math.random() * 9000);
+    const candidate = `TIX-${num}`;
+    const exists = db.prepare('SELECT id FROM orders WHERE order_id = ?').get(candidate);
+    if (!exists) return candidate;
+  }
 }
 
 // ==========================================
@@ -1907,38 +1912,92 @@ app.get('/api/tickets/public/:order_id', async (req, res) => {
 app.post('/api/orders/manual', upload.single('payment_proof'), async (req, res) => {
   try {
     const {
-      name, phone, email, institution, ticket_category,
+      name, phone, email, institution, performance_session, ticket_category,
       ticket_qty, ticket_price, payment_method, notes, auto_verify
     } = req.body;
 
+    if (!name || !name.trim()) {
+      return res.status(400).json({ success: false, error: 'Nama pembeli wajib diisi' });
+    }
+
     const settings = getSettings();
-    const cleanPhone = formatIndonesianPhone(phone);
+    const cleanPhone = phone ? formatIndonesianPhone(phone) : '';
     const order_id = generateOrderId();
-    const qty = parseInt(ticket_qty || 1, 10);
-    const price = parseInt(ticket_price || (settings.ticket_prices ? (settings.ticket_prices[ticket_category] || settings.ticket_prices['Default']) : 75000) || 75000, 10);
-    const total = qty * price;
+    const qty = Math.max(1, parseInt(ticket_qty || 1, 10));
+
+    // Normalisasi sesi pertunjukan (Sesi 1 atau Sesi 2)
+    let normSession = 'Session 1 : 09.30 AM to 12.00 PM';
+    const rawSess = String(performance_session || '').toLowerCase().trim();
+    if (rawSess.includes('session 2') || rawSess.includes('sesi 2') || rawSess.includes('siang') || /13[.:]|14[.:]|15[.:]/.test(rawSess)) {
+      normSession = 'Session 2 : 13.00 PM to 15.30 PM';
+    } else {
+      normSession = 'Session 1 : 09.30 AM to 12.00 PM';
+    }
+
+    const category = ticket_category || 'OTS / On The Spot';
+    let unitPrice = 75000;
+    if (settings.ticket_prices && (settings.ticket_prices[category] || settings.ticket_prices['Default'])) {
+      unitPrice = settings.ticket_prices[category] || settings.ticket_prices['Default'];
+    } else if (settings.ticket_price) {
+      unitPrice = parseInt(settings.ticket_price, 10) || 75000;
+    }
+    const total = qty * unitPrice;
 
     let proofUrl = '';
     if (req.file) {
       proofUrl = `/uploads/${req.file.filename}`;
     }
 
-    const status = auto_verify === 'true' || auto_verify === true ? 'verified' : 'pending';
-    const verified_at = status === 'verified' ? new Date().toISOString() : null;
+    const isAutoVerify = auto_verify === 'true' || auto_verify === true || auto_verify === '1';
+    const status = isAutoVerify ? 'verified' : 'pending';
+    const verified_at = isAutoVerify ? new Date().toISOString() : null;
+    const verified_by = isAutoVerify ? 'Admin Kasir OTS' : null;
+    const payMethod = payment_method || 'Tunai / Cash (Di Tempat)';
+    const senderAccount = name.trim();
+    const hasTransferred = isAutoVerify ? 'Sudah (OTS)' : 'Menunggu';
+    const nowIso = new Date().toISOString();
 
     db.prepare(`
       INSERT INTO orders (
         order_id, name, phone, email, institution, ticket_category,
+        performance_session, sender_account_name, has_transferred,
         ticket_qty, ticket_price, total_amount, payment_method,
-        payment_proof_url, notes, status, verified_at, verified_by, raw_source
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Admin Manual', 'manual_dashboard')
+        payment_proof_url, notes, status, verified_at, verified_by,
+        created_at, raw_source
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual_dashboard')
     `).run(
-      order_id, name, cleanPhone, email || '', institution || '', ticket_category || 'Reguler',
-      qty, price, total, payment_method || 'Tunai / Manual',
-      proofUrl, notes || '', status, verified_at
+      order_id, name.trim(), cleanPhone, (email || '').trim(), (institution || '').trim(), category,
+      normSession, senderAccount, hasTransferred,
+      qty, unitPrice, total, payMethod,
+      proofUrl, notes || 'Penjualan Langsung OTS', status, verified_at, verified_by,
+      nowIso
     );
 
     const created = db.prepare('SELECT * FROM orders WHERE order_id = ?').get(order_id);
+
+    // Update orders cache
+    try {
+      const ordersCache = loadOrdersCache();
+      const cacheKey = `${cleanPhone}_${name.trim()}`;
+      ordersCache[cacheKey] = {
+        order_id,
+        name: name.trim(),
+        phone: cleanPhone,
+        status,
+        checked_in: 0,
+        checked_in_at: null
+      };
+      saveOrdersCache(ordersCache);
+    } catch (e) {
+      console.warn('Warning updating orders_cache on manual order:', e.message);
+    }
+
+    // Persist manual/OTS orders to config/manual_orders.json
+    try {
+      persistManualOrdersToFile();
+    } catch (e) {
+      console.warn('Warning persisting manual orders:', e.message);
+    }
 
     // Send receipt or ticket via WA
     let receiptMessage = '';
@@ -1951,11 +2010,11 @@ app.post('/api/orders/manual', upload.single('payment_proof'), async (req, res) 
       receiptMessage = buildReceiptMessage(created, settings);
     }
 
-    const directLink = getDirectWhatsAppLink(cleanPhone, receiptMessage);
+    const directLink = cleanPhone ? getDirectWhatsAppLink(cleanPhone, receiptMessage) : null;
 
     res.status(201).json({
       success: true,
-      message: 'Pesanan manual berhasil dibuat',
+      message: 'Tiket OTS berhasil diterbitkan dan langsung masuk ke Data Pembeli',
       data: created,
       direct_wa_link: directLink
     });

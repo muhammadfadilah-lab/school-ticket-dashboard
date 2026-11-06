@@ -162,11 +162,11 @@
 
       document.getElementById('buyer-name').textContent = order.name;
       document.getElementById('buyer-instansi').textContent = order.institution || '-';
-      document.getElementById('ticket-category').textContent = order.ticket_category;
+      document.getElementById('ticket-category').textContent = order.performance_session ? `${order.ticket_category} (${order.performance_session.includes('Session 2') ? 'Sesi 2' : 'Sesi 1'})` : order.ticket_category;
       document.getElementById('ticket-qty').textContent = order.ticket_qty;
 
       document.getElementById('event-date').textContent = settings.event_date || '-';
-      document.getElementById('event-time').textContent = settings.event_time || '-';
+      document.getElementById('event-time').textContent = order.performance_session || settings.event_time || '-';
       document.getElementById('event-location').textContent = settings.event_location || '-';
 
       document.getElementById('total-amount').textContent = 'Rp ' + new Intl.NumberFormat('id-ID').format(order.total_amount);

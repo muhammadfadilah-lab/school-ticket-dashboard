@@ -433,7 +433,7 @@ async function loadOrders() {
   const tbody = document.getElementById('orders-tbody');
   tbody.innerHTML = `
     <tr>
-      <td colspan="8" class="text-center py-8 text-slate-400">
+      <td colspan="11" class="text-center py-8 text-slate-400">
         <div class="inline-block animate-spin rounded-full h-6 w-6 border-2 border-indigo-600 border-t-transparent mb-1"></div>
         <p class="text-xs">Memuat transaksi...</p>
       </td>
@@ -480,7 +480,7 @@ async function loadOrders() {
       localStorage.setItem('school_ticket_orders_state', JSON.stringify(existingOverrides));
     } catch (e) {}
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="8" class="text-center py-6 text-red-500 text-xs">Gagal memuat data: ${err.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11" class="text-center py-6 text-red-500 text-xs">Gagal memuat data: ${err.message}</td></tr>`;
   }
 }
 
@@ -498,7 +498,7 @@ function renderOrdersTable(orders) {
   if (orders.length === 0) {
     tbody.innerHTML = `
       <tr>
-        <td colspan="8" class="text-center py-12 text-slate-400">
+        <td colspan="11" class="text-center py-12 text-slate-400">
           <i data-lucide="inbox" class="w-10 h-10 mx-auto mb-2 text-slate-300"></i>
           <p class="text-sm font-semibold text-slate-600">Tidak ada transaksi ditemukan</p>
           <p class="text-xs text-slate-400 mt-1">Coba ubah filter atau lakukan pencarian lain.</p>
@@ -1479,17 +1479,31 @@ async function handleCheckinSubmit(e) {
 // MANUAL ORDER / OTS
 // ==========================================
 function updateManualPrice() {
-  const cat = document.getElementById('manual-ticket-cat').value;
-  const qty = parseInt(document.getElementById('manual-ticket-qty').value || 1, 10);
-  const prices = currentSettings.ticket_prices || { 'Default': 75000, 'Reguler': 75000 };
+  const catEl = document.getElementById('manual-ticket-cat');
+  const qtyEl = document.getElementById('manual-ticket-qty');
+  const totalEl = document.getElementById('manual-ticket-total');
+  if (!catEl || !qtyEl || !totalEl) return;
+
+  const cat = catEl.value;
+  const qty = Math.max(1, parseInt(qtyEl.value || 1, 10));
+  const prices = currentSettings.ticket_prices || { 'Default': 75000, 'Reguler': 75000, 'OTS': 75000 };
   const price = prices[cat] || prices['Default'] || 75000;
-  document.getElementById('manual-ticket-total').value = price * qty;
+  totalEl.value = price * qty;
 }
 
 async function handleManualOrder(e) {
   e.preventDefault();
   const form = document.getElementById('manual-order-form');
+  const submitBtn = document.getElementById('btn-submit-manual-order');
   const formData = new FormData(form);
+
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = `
+      <div class="inline-block animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2"></div>
+      <span>Menyimpan Tiket OTS...</span>
+    `;
+  }
 
   try {
     const res = await fetch('/api/orders/manual', {
@@ -1498,23 +1512,50 @@ async function handleManualOrder(e) {
     });
     const result = await res.json();
 
-    if (!result.success) throw new Error(result.message);
+    if (!result.success) throw new Error(result.error || result.message);
 
-    showToast(`Tiket ${result.data.order_id} berhasil dibuat!`, 'success');
+    showToast(`Tiket OTS ${result.data.order_id} a.n. ${result.data.name} berhasil disimpan dan langsung masuk ke Data Pembeli!`, 'success');
 
-    if (result.direct_wa_link) {
-      if (confirm(`Pesanan dibuat!\nBuka WhatsApp untuk mengirimkan tiket ke ${result.data.name}?`)) {
-        window.open(result.direct_wa_link, '_blank');
+    // Update local Vault if verified
+    if (typeof Vault !== 'undefined' && result.data && result.data.order_id) {
+      if (result.data.status === 'verified') {
+        Vault.recordVerify(result.data.order_id);
       }
     }
 
     form.reset();
     updateManualPrice();
+
+    // Reset filter status & category to 'all' so the new OTS record is immediately visible in Data Pembeli table!
+    const filterStatus = document.getElementById('filter-status');
+    if (filterStatus) filterStatus.value = 'all';
+    const filterCat = document.getElementById('filter-category');
+    if (filterCat) filterCat.value = 'all';
+    const orderSearch = document.getElementById('order-search');
+    if (orderSearch) orderSearch.value = '';
+
+    // Switch to Tab 2: Data Pembeli & Verifikasi
     switchTab('orders');
-    loadStats();
-    loadOrders();
+
+    // Refresh orders and dashboard statistics
+    await Promise.all([loadStats(), loadOrders()]);
+
+    if (result.direct_wa_link) {
+      if (confirm(`Tiket OTS (${result.data.order_id}) berhasil masuk ke Data Pembeli!\nBuka WhatsApp untuk mengirimkan tiket ke ${result.data.name}?`)) {
+        window.open(result.direct_wa_link, '_blank');
+      }
+    }
   } catch (err) {
-    alert('Gagal membuat pesanan: ' + err.message);
+    alert('Gagal membuat pesanan OTS: ' + err.message);
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = `
+        <i data-lucide="check" class="w-4 h-4"></i>
+        <span>Simpan & Masukkan ke Data Pembeli</span>
+      `;
+      if (window.lucide) lucide.createIcons();
+    }
   }
 }
 
