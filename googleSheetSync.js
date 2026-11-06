@@ -35,10 +35,10 @@ function saveOrdersCache(cache) {
 }
 
 /**
- * Generate stable, deterministic order ID from phone and name
+ * Generate stable, deterministic order ID from phone and name with optional salt
  */
-function generateDeterministicOrderId(phone, name) {
-  const seed = `${phone || ''}_${(name || '').trim().toLowerCase()}`;
+function generateDeterministicOrderId(phone, name, salt = '') {
+  const seed = `${phone || ''}_${(name || '').trim().toLowerCase()}${salt ? '_' + salt : ''}`;
   let hash = 0;
   for (let i = 0; i < seed.length; i++) {
     hash = ((hash << 5) - hash) + seed.charCodeAt(i);
@@ -46,6 +46,57 @@ function generateDeterministicOrderId(phone, name) {
   }
   const codeNum = Math.abs(hash) % 9000 + 1000;
   return `TIX-${codeNum}`;
+}
+
+/**
+ * Get existing order ID or generate a guaranteed non-colliding order ID
+ */
+function getOrGenerateUniqueOrderId(db, ordersCache, sheetOrderId, phone, name) {
+  if (sheetOrderId && sheetOrderId.trim()) {
+    return sheetOrderId.trim();
+  }
+
+  const cleanName = (name || '').trim();
+  const cleanPhone = phone || '';
+  const cacheKey = `${cleanPhone}_${cleanName}`;
+
+  if (ordersCache[cacheKey] && ordersCache[cacheKey].order_id) {
+    const cachedId = ordersCache[cacheKey].order_id;
+    // Check if another order with different identity in DB holds this ID
+    const conflicting = db.prepare(`
+      SELECT id FROM orders 
+      WHERE order_id = ? AND NOT (phone = ? AND lower(trim(name)) = lower(trim(?)))
+    `).get(cachedId, cleanPhone, cleanName);
+    if (!conflicting) {
+      return cachedId;
+    }
+  }
+
+  let saltIndex = 0;
+  while (true) {
+    const salt = saltIndex === 0 ? '' : `salt${saltIndex}`;
+    const candidate = generateDeterministicOrderId(cleanPhone, cleanName, salt);
+
+    // Verify candidate does NOT conflict in DB for a different person
+    const dbConflict = db.prepare(`
+      SELECT id FROM orders 
+      WHERE order_id = ? AND NOT (phone = ? AND lower(trim(name)) = lower(trim(?)))
+    `).get(candidate, cleanPhone, cleanName);
+
+    // Verify candidate does NOT conflict in cache for a different person
+    let cacheConflict = false;
+    for (const [k, v] of Object.entries(ordersCache)) {
+      if (k !== cacheKey && v && v.order_id === candidate) {
+        cacheConflict = true;
+        break;
+      }
+    }
+
+    if (!dbConflict && !cacheConflict) {
+      return candidate;
+    }
+    saltIndex++;
+  }
 }
 
 /**
@@ -169,9 +220,12 @@ async function syncFromGoogleSheet(sheetUrlOrId, options = {}) {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'google_sheet_sync')
   `);
 
-  const updateProof = db.prepare(`
+  const updateOrder = db.prepare(`
     UPDATE orders 
-    SET payment_proof_url = COALESCE(NULLIF(?, ''), payment_proof_url),
+    SET name = ?,
+        phone = ?,
+        email = COALESCE(NULLIF(?, ''), email),
+        payment_proof_url = COALESCE(NULLIF(?, ''), payment_proof_url),
         sender_account_name = COALESCE(NULLIF(?, ''), sender_account_name),
         has_transferred = COALESCE(NULLIF(?, ''), has_transferred),
         performance_session = COALESCE(NULLIF(?, ''), performance_session),
@@ -191,11 +245,11 @@ async function syncFromGoogleSheet(sheetUrlOrId, options = {}) {
 
     // Ekstrak kolom utama berdasarkan form user
     const name = data['Name'] || data['Nama'] || data['Nama Lengkap'] || '';
-    const rawPhone = data['Phone Number'] || data['Nomor WhatsApp'] || data['Phone'] || data['No WA'] || '';
-    if (!name || !rawPhone) continue;
+    if (!name) continue;
 
-    const phone = formatIndonesianPhone(rawPhone);
-    const email = data['Email'] || '';
+    const rawPhone = data['Phone Number'] || data['Nomor WhatsApp'] || data['Phone'] || data['No WA'] || '';
+    const phone = rawPhone ? formatIndonesianPhone(rawPhone) : '';
+    const email = data['Email'] || data['Email Address'] || data['Alamat Email'] || '';
     const performance_session = data['Performance Session'] || data['Session'] || '';
     const ticket_category = performance_session || 'Reguler';
     const ticket_qty = parseInt(data['Amount of Ticket Purchased'] || data['Jumlah Tiket'] || '1', 10) || 1;
@@ -205,22 +259,36 @@ async function syncFromGoogleSheet(sheetUrlOrId, options = {}) {
     const rawTimestamp = data['Timestamp'] || data['Waktu'] || '';
     const timestampStr = normalizeDateToSqlite(rawTimestamp);
 
-    const cacheKey = `${phone}_${name.trim()}`;
+    const sheetOrderId = (data['KODE TIKET (ORDER ID)'] || data['Kode Tiket'] || data['Order ID'] || '').trim();
 
-    // Cek apakah di sheet sudah ada kolom Kode Tiket
-    let order_id = data['KODE TIKET (ORDER ID)'] || data['Kode Tiket'] || data['Order ID'] || '';
-    if (!order_id) {
-      if (ordersCache[cacheKey] && ordersCache[cacheKey].order_id) {
-        order_id = ordersCache[cacheKey].order_id;
-      } else {
-        order_id = generateDeterministicOrderId(phone, name);
-      }
+    // 1. Cari apakah data ini sudah ada sebelumnya di database
+    let existing = null;
+    if (sheetOrderId) {
+      existing = db.prepare('SELECT id, order_id, status, ticket_price, checked_in, checked_in_at, payment_proof_url, email, name, phone FROM orders WHERE order_id = ?').get(sheetOrderId);
     }
+    if (!existing && phone) {
+      existing = db.prepare('SELECT id, order_id, status, ticket_price, checked_in, checked_in_at, payment_proof_url, email, name, phone FROM orders WHERE phone = ? AND lower(trim(name)) = lower(trim(?))').get(phone, name);
+    }
+    if (!existing && !phone) {
+      existing = db.prepare('SELECT id, order_id, status, ticket_price, checked_in, checked_in_at, payment_proof_url, email, name, phone FROM orders WHERE lower(trim(name)) = lower(trim(?))').get(name);
+    }
+
+    // Tentukan order_id yang valid & bebas tabrakan (collision-free)
+    let order_id = '';
+    if (sheetOrderId) {
+      order_id = sheetOrderId;
+    } else if (existing) {
+      order_id = existing.order_id;
+    } else {
+      order_id = getOrGenerateUniqueOrderId(db, ordersCache, '', phone, name);
+    }
+
+    const cacheKey = `${phone}_${name.trim()}`;
 
     // CEK APAKAH TRANSAKSI INI PERNAH DIHAPUS (TOMBSTONE DELETED)
     const isDeleted = db.prepare(`
       SELECT 1 FROM deleted_orders 
-      WHERE order_id = ? OR (phone = ? AND name = ?)
+      WHERE order_id = ? OR (phone != '' AND phone = ? AND lower(trim(name)) = lower(trim(?)))
     `).get(order_id, phone, name);
 
     if (isDeleted) {
@@ -245,18 +313,23 @@ async function syncFromGoogleSheet(sheetUrlOrId, options = {}) {
     }
     const total_amount = ticket_price * ticket_qty;
 
-    // Cek apakah order sudah ada di database (berdasarkan order_id atau nama + phone)
-    let existing = null;
-    if (order_id) {
-      existing = db.prepare('SELECT id, order_id, status, ticket_price, checked_in, checked_in_at, payment_proof_url FROM orders WHERE order_id = ?').get(order_id);
-    }
-    if (!existing) {
-      existing = db.prepare('SELECT id, order_id, status, ticket_price, checked_in, checked_in_at, payment_proof_url FROM orders WHERE phone = ? AND name = ?').get(phone, name);
-    }
-
     if (existing) {
-      // Update data jika ada bukti pembayaran baru, perubahan jumlah tiket, atau nominal total baru
-      updateProof.run(payment_proof_url, sender_account_name, have_transferred, performance_session, ticket_category, ticket_qty, ticket_price, total_amount, existing.id);
+      // Update data: sinkronkan email, nama, nomor telepon, sesi, nominal, jumlah tiket, bukti bayar
+      updateOrder.run(
+        name,
+        phone,
+        email,
+        payment_proof_url,
+        sender_account_name,
+        have_transferred,
+        performance_session,
+        ticket_category,
+        ticket_qty,
+        ticket_price,
+        total_amount,
+        existing.id
+      );
+
       if (timestampStr) {
         db.prepare('UPDATE orders SET created_at = ? WHERE id = ?').run(timestampStr, existing.id);
       }
@@ -364,5 +437,7 @@ module.exports = {
   syncFromGoogleSheet,
   loadOrdersCache,
   saveOrdersCache,
-  normalizeDateToSqlite
+  normalizeDateToSqlite,
+  generateDeterministicOrderId,
+  getOrGenerateUniqueOrderId
 };
